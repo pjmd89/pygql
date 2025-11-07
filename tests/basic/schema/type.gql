@@ -1,9 +1,9 @@
-Type User{
+type User{
     id: ID!
     name: String!
     email: String!
 }
 
-Type Query {
-    users: [User!]!
+type Query {
+    getUser: User!
 }

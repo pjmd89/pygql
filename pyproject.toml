@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pygql"
+version = "0.1.0"
+description = "A Python GraphQL package"
+readme = "README.md"
+requires-python = ">=3.8"
+authors = [
+    {name = "Tu Nombre", email = "tu@email.com"}
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "black>=22.0",
+    "flake8>=4.0",
+]

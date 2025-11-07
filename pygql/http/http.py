@@ -32,7 +32,7 @@ class HTTPServer:
         full_schema = '\n'.join(schema_parts)
         return build_schema(full_schema)
 
-    def gql(self, route: RouteConfig):
+    def gql(self):
         pass
 
     def file(self, route: RouteConfig):

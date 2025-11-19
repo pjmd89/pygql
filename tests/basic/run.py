@@ -1,4 +1,4 @@
-from pythongql import HTTPServer
+from pgql import HTTPServer
 from resolvers.gql.user.user import User
 from resolvers.gql.company.company import Company
 server = HTTPServer('etc/http.yml')

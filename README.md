@@ -1,4 +1,4 @@
-# pygql
+# gql
 
 Un paquete Python para trabajar con GraphQL.
 
@@ -7,13 +7,13 @@ Un paquete Python para trabajar con GraphQL.
 Para desarrollo local:
 
 ```bash
-pip install  pythongql
+pip install  pgql
 ```
 
 ## Uso
 
 ```python
-from pygql import hello
+from pgql import hello
 
 print(hello())  # Output: Hello from pygql!
 ```

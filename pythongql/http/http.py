@@ -2,7 +2,7 @@ from functools import partial
 from graphql import GraphQLSchema, build_schema, graphql
 from graphql.type.definition import GraphQLObjectType, GraphQLNonNull, GraphQLList
 import uvicorn
-from pygql.http.config_http_enum import ConfigHTTPEnum
+from pythongql.http.config_http_enum import ConfigHTTPEnum
 from .config import HTTPConfig, RouteConfig
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse, Response

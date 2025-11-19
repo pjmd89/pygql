@@ -1,0 +1,4 @@
+extend type Query{
+    getUser: User!
+    getUsers: [User!]!
+}

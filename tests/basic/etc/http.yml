@@ -14,4 +14,4 @@ server:
     - mode: websocket
       endpoint: /ws
     - mode: rest
-      endpoint: /api      
+      endpoint: /api

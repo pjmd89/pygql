@@ -7,7 +7,7 @@ Un paquete Python para trabajar con GraphQL.
 Para desarrollo local:
 
 ```bash
-pip install -e .
+pip install  pypgql
 ```
 
 ## Uso

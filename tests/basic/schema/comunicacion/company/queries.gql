@@ -1,0 +1,4 @@
+extend type Query{
+    getCompany: Company!
+    getCompanies: [Company!]!
+}

@@ -65,7 +65,7 @@ class HTTPServer:
 
     def __load_schema(self, schema_path: str) -> GraphQLSchema:
         schema_parts = []
-        for file_path in glob.glob(schema_path + '/*.gql'):
+        for file_path in glob.glob(schema_path + '/**/*.gql', recursive=True):
             with open(file_path, 'r') as f:
                 schema_parts.append(f.read())
 

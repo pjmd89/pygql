@@ -1,0 +1,25 @@
+directive @paginate(page: Int, split: Int) on FIELD_DEFINITION
+directive @uppercase on FIELD_DEFINITION
+
+type Query {
+  # Test paginación
+  users(page: Int, split: Int): UsersResult @paginate
+  
+  # Test sin directiva
+  allUsers: [User]
+  
+  # Test directiva simple
+  message: String @uppercase
+}
+
+type UsersResult {
+  data: [User]
+  page: Int
+  total: Int
+}
+
+type User {
+  id: ID!
+  name: String!
+  email: String
+}

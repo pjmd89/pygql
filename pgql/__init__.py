@@ -8,6 +8,7 @@ from .http.http import HTTPServer
 from .http.authorize_info import AuthorizeInfo
 from .http.session import Session
 from .resolvers.base import Scalar, ScalarResolved, ResolverInfo
+from .directives import Directive, DirectiveList
 from .errors import (
     GQLError,
     ErrorStruct,
@@ -33,6 +34,8 @@ __all__ = [
     "Scalar",
     "ScalarResolved",
     "ResolverInfo",
+    "Directive",
+    "DirectiveList",
     "GQLError",
     "ErrorStruct",
     "GQLErrorLocation",

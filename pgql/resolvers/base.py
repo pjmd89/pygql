@@ -50,12 +50,19 @@ class ResolverInfo:
             # Access operation type
             if info.operation == "query":
                 return {"id": user_id, "name": "John"}
+            
+            # Access directive results (executed BEFORE resolver)
+            paginate = info.directives.get('paginate')
+            if paginate:
+                skip = paginate['skip']
+                limit = paginate['limit']
     """
     operation: str              # "query", "mutation", "subscription"
     resolver: str               # Field name (camelCase from schema)
     args: Dict[str, Any]       # Arguments (snake_case keys)
     parent: Any                # Parent/source value
     type_name: str             # Current GraphQL type
+    directives: Dict[str, Any] = None  # Directive results (DirectiveList)
     parent_type_name: Optional[str] = None  # Parent GraphQL type
     session_id: Optional[str] = None        # Session ID
     context: Optional[Dict[str, Any]] = None  # Full context

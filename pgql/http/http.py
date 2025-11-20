@@ -5,6 +5,7 @@ import uvicorn
 import re
 from pgql.http.config_http_enum import ConfigHTTPEnum
 from pgql.resolvers.base import Scalar, ScalarResolved, ResolverInfo
+from pgql.directives import Directive
 from .config import HTTPConfig, RouteConfig
 from .authorize_info import AuthorizeInfo
 from .session import SessionStore, Session
@@ -33,19 +34,23 @@ def assign_resolvers(
     schema: GraphQLSchema, 
     classes: dict[str, type],
     on_authorize_fn: Optional[Callable[[AuthorizeInfo], bool]] = None,
-    request: Optional[Request] = None
+    request: Optional[Request] = None,
+    directives: Optional[dict[str, Directive]] = None
 ) -> GraphQLSchema:
-    """Asigna resolvers a los campos del schema con interceptor de autorización opcional
+    """Asigna resolvers a los campos del schema con interceptor de autorización y directivas
     
     Args:
         schema: El schema GraphQL
         classes: Diccionario de resolvers mapeados por nombre de tipo
         on_authorize_fn: Función opcional para autorizar ejecución de resolvers
         request: Request de Starlette para obtener session_id de cookies
+        directives: Diccionario de directivas registradas
     """
     
+    directives = directives or {}
+    
     def create_authorized_resolver(original_resolver, src_type: str, dst_type: str, resolver_name: str, operation: str):
-        """Crea un wrapper que intercepta la ejecución del resolver con autorización"""
+        """Crea un wrapper que intercepta la ejecución del resolver con autorización y directivas"""
         @wraps(original_resolver)
         def authorized_resolver(parent, info, **kwargs):
             # Convertir argumentos de camelCase a snake_case
@@ -56,6 +61,37 @@ def assign_resolvers(
             if info.context and isinstance(info.context, dict):
                 session_id = info.context.get('session_id')
             
+            # ⚡ PASO 1: Procesar directivas ANTES del resolver
+            # Las directivas se obtienen del SCHEMA (no de la query)
+            directive_results = {}
+            
+            # Obtener directivas del schema
+            if info.parent_type and info.field_name:
+                # Acceder al campo en el schema
+                field_def = info.parent_type.fields.get(info.field_name)
+                if field_def and hasattr(field_def, 'ast_node') and field_def.ast_node:
+                    if hasattr(field_def.ast_node, 'directives') and field_def.ast_node.directives:
+                        for directive_node in field_def.ast_node.directives:
+                            directive_name = directive_node.name.value
+                            if directive_name in directives:
+                                # Pasar todos los argumentos del field a la directiva
+                                # La directiva decide cuáles usar
+                                directive_args = kwargs.copy()
+                                
+                                # Invocar directiva
+                                directive_instance = directives[directive_name]
+                                result, error = directive_instance.invoke(
+                                    directive_args,
+                                    dst_type,
+                                    resolver_name
+                                )
+                                
+                                if error:
+                                    # Si la directiva retorna error, manejarlo
+                                    raise Exception(str(error))
+                                
+                                directive_results[directive_name] = result
+            
             # Crear ResolverInfo compatible con Go
             resolver_info = ResolverInfo(
                 operation=operation,
@@ -63,13 +99,14 @@ def assign_resolvers(
                 args=snake_kwargs,
                 parent=parent,
                 type_name=dst_type,
+                directives=directive_results,  # ⬅️ Directivas procesadas
                 parent_type_name=src_type,
                 session_id=session_id,
                 context=info.context if info.context else {},
                 field_name=resolver_name
             )
             
-            # Si hay función de autorización, ejecutarla
+            # ⚡ PASO 2: Autorización (si está configurada)
             if on_authorize_fn:
                 # Crear objeto de autorización
                 auth_info = AuthorizeInfo(
@@ -173,6 +210,7 @@ class HTTPServer:
         self.__resolvers: dict[str, type] = {}
         self.__session_store = SessionStore()  # Almacén de sesiones
         self.__scalars: dict[str, Scalar] = {}  # Registro de custom scalars
+        self.__directives: dict[str, 'Directive'] = {}  # Registro de custom directives
 
         for route in self.__httpConfig.server.routes:
             match route.mode:
@@ -292,11 +330,16 @@ class HTTPServer:
     def gql(self, resolvers: dict[str, type]):
         """Registra resolvers para los schemas GraphQL"""
         self.__resolvers = resolvers
-        # Re-cargar schemas para aplicar scalars registrados
+        # Re-cargar schemas para aplicar scalars y directives registrados
         for route in self.__httpConfig.server.routes:
             if route.mode == ConfigHTTPEnum.MODE_GQL:
                 schema = self.__load_schema(route.schema)
-                schema = assign_resolvers(schema, resolvers, self.__on_authorize)
+                schema = assign_resolvers(
+                    schema, 
+                    resolvers, 
+                    self.__on_authorize,
+                    directives=self.__directives  # ⬅️ Pasar directivas
+                )
                 self.__schemas[route.endpoint] = schema
     
     def on_authorize(self, authorize_fn: Callable[[AuthorizeInfo], bool]):
@@ -316,7 +359,12 @@ class HTTPServer:
         # Re-asignar resolvers con la nueva función de autorización
         if self.__resolvers:
             for endpoint, schema in self.__schemas.items():
-                schema = assign_resolvers(schema, self.__resolvers, self.__on_authorize)
+                schema = assign_resolvers(
+                    schema, 
+                    self.__resolvers, 
+                    self.__on_authorize,
+                    directives=self.__directives  # ⬅️ Pasar directivas
+                )
                 self.__schemas[endpoint] = schema
     
     def scalar(self, name: str, scalar_instance: Scalar):
@@ -354,6 +402,48 @@ class HTTPServer:
             al momento de cargar el schema.
         """
         self.__scalars[name] = scalar_instance
+    
+    def directive(self, name: str, directive_instance: Directive):
+        """Registra una directiva personalizada
+        
+        Args:
+            name: Nombre de la directiva (sin @) que se usa en el schema
+            directive_instance: Instancia de una clase que hereda de Directive
+        
+        Example:
+            from pgql import HTTPServer, Directive
+            
+            class PaginateDirective(Directive):
+                def invoke(self, args, type_name, field_name):
+                    page = args.get('page', 1)
+                    split = args.get('split', 10)
+                    return {
+                        'page': page,
+                        'split': split,
+                        'skip': (page - 1) * split,
+                        'limit': split
+                    }, None
+            
+            server = HTTPServer("config.yaml")
+            server.directive("paginate", PaginateDirective())
+            
+            # En schema.gql:
+            # type Query {
+            #   users(page: Int, split: Int): [User] @paginate
+            # }
+            
+            # En resolver:
+            # def users(self, info: ResolverInfo):
+            #     paginate = info.directives.get('paginate')
+            #     if paginate:
+            #         skip = paginate['skip']
+            #         limit = paginate['limit']
+        
+        Note:
+            Las directivas se ejecutan ANTES del resolver.
+            Los resultados están disponibles en info.directives[nombre_directiva].
+        """
+        self.__directives[name] = directive_instance
     
     def create_session(self, max_age: int = 3600) -> Session:
         """Crea una nueva sesión y retorna el objeto Session

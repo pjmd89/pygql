@@ -1,0 +1,10 @@
+cookie_name: session_id
+debug: true
+http_port: 8080
+https_port: 8443
+server:
+  host: localhost
+  routes:
+  - endpoint: /graphql
+    mode: gql
+    schema: schema_directives

@@ -1,0 +1,4 @@
+# Custom Scalars
+scalar Date
+scalar URL
+scalar JSON

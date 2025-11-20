@@ -1,0 +1,7 @@
+type Event {
+    id: ID!
+    name: String!
+    date: Date!
+    website: URL!
+    metadata: JSON
+}

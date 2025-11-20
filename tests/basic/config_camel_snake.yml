@@ -1,0 +1,10 @@
+http_port: 8080
+https_port: 8443
+cookie_name: session_id
+debug: true
+server:
+  host: localhost
+  routes:
+    - mode: gql
+      endpoint: /graphql
+      schema: tests/basic/schema_camel_snake

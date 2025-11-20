@@ -1,8 +1,10 @@
 from functools import partial, wraps
-from graphql import GraphQLSchema, build_schema, graphql
+from graphql import GraphQLSchema, build_schema, graphql, GraphQLScalarType
 from graphql.type.definition import GraphQLObjectType, GraphQLNonNull, GraphQLList
 import uvicorn
+import re
 from pgql.http.config_http_enum import ConfigHTTPEnum
+from pgql.resolvers.base import Scalar, ScalarResolved
 from .config import HTTPConfig, RouteConfig
 from .authorize_info import AuthorizeInfo
 from .session import SessionStore, Session
@@ -12,6 +14,12 @@ from starlette.requests import Request
 from starlette.routing import Route
 from typing import Callable, Optional
 import glob
+
+def camel_to_snake(name: str) -> str:
+    """Convierte camelCase a snake_case"""
+    # Insertar _ antes de cada letra mayúscula y convertir a minúsculas
+    s1 = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', name)
+    return re.sub('([a-z0-9])([A-Z])', r'\1_\2', s1).lower()
 
 def get_base_type_name(field_type):
     while isinstance(field_type, (GraphQLNonNull, GraphQLList)):
@@ -40,6 +48,9 @@ def assign_resolvers(
         """Crea un wrapper que intercepta la ejecución del resolver con autorización"""
         @wraps(original_resolver)
         def authorized_resolver(parent, info, **kwargs):
+            # Convertir argumentos de camelCase a snake_case
+            snake_kwargs = {camel_to_snake(key): value for key, value in kwargs.items()}
+            
             # Si hay función de autorización, ejecutarla
             if on_authorize_fn:
                 # Obtener session_id del contexto
@@ -63,7 +74,7 @@ def assign_resolvers(
                     raise PermissionError(f"No autorizado para ejecutar {dst_type}.{resolver_name}")
             
             # Si está autorizado o no hay función de autorización, ejecutar resolver
-            return original_resolver(parent, info, **kwargs)
+            return original_resolver(parent, info, **snake_kwargs)
         
         return authorized_resolver
     
@@ -71,17 +82,39 @@ def assign_resolvers(
         if not hasattr(graphql_type, 'fields'):
             return
         
+        # Buscar resolver por el tipo padre primero (para root queries/mutations)
+        parent_resolver = classes.get(graphql_type.name)
+        
         for field_name, field in graphql_type.fields.items():
             return_type_name = get_base_type_name(field.type)
             
-            if return_type_name and return_type_name in classes:
+            # Convertir el nombre del field de camelCase a snake_case para buscar el método
+            method_name = camel_to_snake(field_name)
+            
+            # Opción 1: Resolver en el objeto del tipo padre (ej: Query.get_users)
+            if parent_resolver and hasattr(parent_resolver, method_name):
+                method = getattr(parent_resolver, method_name)
+                
+                authorized_method = create_authorized_resolver(
+                    method,
+                    graphql_type.name,  # src_type: tipo padre
+                    return_type_name,   # dst_type: tipo de retorno
+                    field_name,         # resolver: nombre del field
+                    operation
+                )
+                
+                field.resolve = authorized_method
+                
+                resolver_name = parent_resolver.__class__.__name__ if not isinstance(parent_resolver, type) else parent_resolver.__name__
+                auth_status = "🔒" if on_authorize_fn else "✅"
+                print(f"{auth_status} Asignado {resolver_name}.{method_name} a {graphql_type.name}.{field_name}")
+            
+            # Opción 2: Resolver en el objeto del tipo de retorno (ej: Company para User.company)
+            elif return_type_name and return_type_name in classes:
                 resolver_obj = classes[return_type_name]
-                if hasattr(resolver_obj, field_name):
-                    method = getattr(resolver_obj, field_name)
+                if hasattr(resolver_obj, method_name):
+                    method = getattr(resolver_obj, method_name)
                     
-                    # Wrappear el resolver con autorización
-                    # src_type es el tipo GraphQL que contiene el field (ej: User para User.company)
-                    # dst_type es el tipo de retorno del field (ej: Company para User.company)
                     authorized_method = create_authorized_resolver(
                         method,
                         graphql_type.name,  # src_type: tipo padre
@@ -92,10 +125,9 @@ def assign_resolvers(
                     
                     field.resolve = authorized_method
                     
-                    # Obtener el nombre de la clase (funciona para instancias y clases)
                     resolver_name = resolver_obj.__class__.__name__ if not isinstance(resolver_obj, type) else resolver_obj.__name__
                     auth_status = "🔒" if on_authorize_fn else "✅"
-                    print(f"{auth_status} Asignado {resolver_name}.{field_name} a {graphql_type.name}.{field_name}")
+                    print(f"{auth_status} Asignado {resolver_name}.{method_name} a {graphql_type.name}.{field_name}")
     
     # Determinar el tipo de operación basado en el tipo de schema
     if schema.query_type:
@@ -126,6 +158,7 @@ class HTTPServer:
         self.__on_authorize: Optional[Callable[[AuthorizeInfo], bool]] = None
         self.__resolvers: dict[str, type] = {}
         self.__session_store = SessionStore()  # Almacén de sesiones
+        self.__scalars: dict[str, Scalar] = {}  # Registro de custom scalars
 
         for route in self.__httpConfig.server.routes:
             match route.mode:
@@ -158,14 +191,99 @@ class HTTPServer:
                 schema_parts.append(f.read())
 
         full_schema = '\n'.join(schema_parts)
-        return build_schema(full_schema)
+        schema = build_schema(full_schema)
+        
+        # Registrar custom scalars en el schema
+        for scalar_name, scalar_instance in self.__scalars.items():
+            if scalar_name in schema.type_map:
+                # Crear wrapper para integrar con graphql-core
+                def make_serialize(scalar_obj):
+                    def serialize(value):
+                        print(f"         [SERIALIZE] {scalar_obj.__class__.__name__}: {value} ({type(value)})")
+                        result, error = scalar_obj.set(value)
+                        if error:
+                            raise error
+                        print(f"         [SERIALIZE] → {result}")
+                        return result
+                    return serialize
+                
+                def make_parse_value(scalar_obj):
+                    def parse_value(value):
+                        resolved = ScalarResolved(
+                            value=value,
+                            resolver_name='',
+                            resolved=None
+                        )
+                        result, error = scalar_obj.assess(resolved)
+                        if error:
+                            raise error
+                        return result
+                    return parse_value
+                
+                def make_parse_literal(scalar_obj):
+                    def parse_literal(ast, variable_values=None):
+                        # Extraer valor del AST node
+                        value = getattr(ast, 'value', None)
+                        resolved = ScalarResolved(
+                            value=value,
+                            resolver_name='',
+                            resolved=None
+                        )
+                        result, error = scalar_obj.assess(resolved)
+                        if error:
+                            raise error
+                        return result
+                    return parse_literal
+                
+                # Crear el nuevo scalar type
+                new_scalar_type = GraphQLScalarType(
+                    name=scalar_name,
+                    serialize=make_serialize(scalar_instance),
+                    parse_value=make_parse_value(scalar_instance),
+                    parse_literal=make_parse_literal(scalar_instance)
+                )
+                
+                # Guardar referencia al scalar viejo
+                old_scalar_type = schema.type_map[scalar_name]
+                
+                # Reemplazar el scalar en el schema
+                schema.type_map[scalar_name] = new_scalar_type
+                print(f"      ✅ Scalar '{scalar_name}' reemplazado en type_map")
+                
+                # CRÍTICO: Actualizar todas las referencias a este scalar en los campos
+                for type_name, graphql_type in schema.type_map.items():
+                    if isinstance(graphql_type, GraphQLObjectType) and hasattr(graphql_type, 'fields'):
+                        for field_name, field in graphql_type.fields.items():
+                            # Reemplazar scalar en el tipo del campo (manejando NonNull y List)
+                            field.type = self._replace_scalar_in_type(field.type, scalar_name, new_scalar_type)
+                            
+                            # También actualizar argumentos del campo
+                            if hasattr(field, 'args') and field.args:
+                                for arg_name, arg in field.args.items():
+                                    arg.type = self._replace_scalar_in_type(arg.type, scalar_name, new_scalar_type)
+        
+        return schema
+    
+    def _replace_scalar_in_type(self, field_type, scalar_name, new_scalar_type):
+        """Reemplaza recursivamente un scalar en un tipo (manejando NonNull y List)"""
+        if isinstance(field_type, GraphQLNonNull):
+            return GraphQLNonNull(self._replace_scalar_in_type(field_type.of_type, scalar_name, new_scalar_type))
+        elif isinstance(field_type, GraphQLList):
+            return GraphQLList(self._replace_scalar_in_type(field_type.of_type, scalar_name, new_scalar_type))
+        elif hasattr(field_type, 'name') and field_type.name == scalar_name:
+            return new_scalar_type
+        else:
+            return field_type
 
     def gql(self, resolvers: dict[str, type]):
         """Registra resolvers para los schemas GraphQL"""
         self.__resolvers = resolvers
-        for endpoint, schema in self.__schemas.items():
-            schema = assign_resolvers(schema, resolvers, self.__on_authorize)
-            self.__schemas[endpoint] = schema
+        # Re-cargar schemas para aplicar scalars registrados
+        for route in self.__httpConfig.server.routes:
+            if route.mode == ConfigHTTPEnum.MODE_GQL:
+                schema = self.__load_schema(route.schema)
+                schema = assign_resolvers(schema, resolvers, self.__on_authorize)
+                self.__schemas[route.endpoint] = schema
     
     def on_authorize(self, authorize_fn: Callable[[AuthorizeInfo], bool]):
         """Registra función de autorización para interceptar resolvers
@@ -186,6 +304,42 @@ class HTTPServer:
             for endpoint, schema in self.__schemas.items():
                 schema = assign_resolvers(schema, self.__resolvers, self.__on_authorize)
                 self.__schemas[endpoint] = schema
+    
+    def scalar(self, name: str, scalar_instance: Scalar):
+        """Registra un scalar personalizado
+        
+        Args:
+            name: Nombre del scalar (debe coincidir con 'scalar X' en schema.gql)
+            scalar_instance: Instancia de una clase que hereda de Scalar
+        
+        Example:
+            from pgql import HTTPServer, Scalar, ScalarResolved
+            from datetime import datetime
+            
+            class DateScalar(Scalar):
+                def set(self, value):
+                    if value is None:
+                        return None, None
+                    if isinstance(value, datetime):
+                        return value.strftime("%Y-%m-%d"), None
+                    return str(value), None
+                
+                def assess(self, resolved):
+                    if resolved.value is None:
+                        return None, None
+                    try:
+                        return datetime.strptime(resolved.value, "%Y-%m-%d"), None
+                    except ValueError as e:
+                        return None, e
+            
+            server = HTTPServer("config.yaml")
+            server.scalar("Date", DateScalar())
+            
+        Note:
+            Debe llamarse ANTES de gql() para que los scalars estén registrados
+            al momento de cargar el schema.
+        """
+        self.__scalars[name] = scalar_instance
     
     def create_session(self, max_age: int = 3600) -> Session:
         """Crea una nueva sesión y retorna el objeto Session

@@ -61,7 +61,7 @@ class UserWithSession(User):
             'message': 'Credenciales inválidas'
         }
     
-    def getUser(self, parent, info):
+    def get_user(self, parent, info):
         """Obtener usuario desde la sesión"""
         session = info.context.get('session')
         

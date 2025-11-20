@@ -1,0 +1,13 @@
+# GraphQL Schema con campos en camelCase (convención GraphQL)
+
+type User {
+    id: ID!
+    firstName: String!
+    lastName: String!
+    emailAddress: String!
+}
+
+type Query {
+    getUser(userId: ID!): User
+    getAllUsers: [User!]!
+}

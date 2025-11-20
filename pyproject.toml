@@ -4,14 +4,42 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pgql"
-version = "0.1.0"
-description = "A Python GraphQL package"
+version = "0.2.0"
+description = "A lightweight Python GraphQL server framework with automatic resolver mapping and schema introspection"
 readme = "README.md"
 requires-python = ">=3.8"
+license = {text = "MIT"}
+keywords = ["graphql", "api", "server", "starlette", "uvicorn", "schema", "resolver"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Framework :: AsyncIO",
+]
 authors = [
     {name = "Tu Nombre", email = "tu@email.com"}
 ]
-dependencies = []
+dependencies = [
+    "graphql-core>=3.2.0",
+    "starlette>=0.27.0",
+    "uvicorn[standard]>=0.23.0",
+    "pyyaml>=6.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/pjmd89/pygql"
+Repository = "https://github.com/pjmd89/pygql"
+Documentation = "https://github.com/pjmd89/pygql#readme"
+Issues = "https://github.com/pjmd89/pygql/issues"
 
 [project.optional-dependencies]
 dev = [

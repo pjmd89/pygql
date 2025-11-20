@@ -55,6 +55,8 @@ def assign_resolvers(
         def authorized_resolver(parent, info, **kwargs):
             # Convertir argumentos de camelCase a snake_case
             snake_kwargs = {camel_to_snake(key): value for key, value in kwargs.items()}
+            # print(f"🔧 [WRAPPER] kwargs recibidos: {kwargs}")
+            # print(f"🔧 [WRAPPER] snake_kwargs: {snake_kwargs}")
             
             # Obtener session_id del contexto
             session_id = None
@@ -105,6 +107,7 @@ def assign_resolvers(
                 context=info.context if info.context else {},
                 field_name=resolver_name
             )
+            # print(f"🔧 [WRAPPER] resolver_info.args: {resolver_info.args}")
             
             # ⚡ PASO 2: Autorización (si está configurada)
             if on_authorize_fn:

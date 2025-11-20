@@ -7,7 +7,7 @@ Este ejemplo demuestra:
 3. Uso en queries con validación automática
 """
 
-from pgql import HTTPServer, Scalar, ScalarResolved, new_warning, new_fatal
+from pgql import HTTPServer, Scalar, ScalarResolved, new_warning, new_fatal, ResolverInfo
 from datetime import datetime
 from urllib.parse import urlparse
 import json
@@ -27,12 +27,14 @@ class DateScalar(Scalar):
     
     def assess(self, resolved):
         """Input: string → datetime"""
+        print(f"🔍 [ASSESS] DateScalar.assess() llamado con: '{resolved.value}'")
         if resolved.value is None:
             return None, None
         
         try:
             if isinstance(resolved.value, str):
                 result = datetime.strptime(resolved.value, "%Y-%m-%d")
+                print(f"✅ [ASSESS] DateScalar.assess() retorna: {result}")
                 return result, None
             return None, new_fatal(f"Expected string, got {type(resolved.value).__name__}")
         except ValueError:
@@ -98,13 +100,17 @@ class QueryResolvers:
     def __init__(self):
         print("  ✅ QueryResolvers instance created")
     
-    def events(self, info, after=None):
+    def events(self, info: ResolverInfo):
         """
         Query events con filtro de fecha.
         El parámetro 'after' ya viene como datetime gracias a DateScalar.
         """
-        print(f"\n🔍 Query: events(after={after})")
-        print(f"   Type of 'after': {type(after)}")
+        # Obtener argumentos desde info.args (patrón Go-compatible)
+        after = info.args.get('after')
+        
+        print(f"\n⚡ [RESOLVER] events() llamado")
+        print(f"   [RESOLVER] after={after}")
+        print(f"   [RESOLVER] Type of 'after': {type(after)}")
         
         all_events = [
             {

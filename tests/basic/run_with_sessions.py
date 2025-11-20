@@ -34,7 +34,7 @@ class UserWithSession(User):
     
     def login(self, info: ResolverInfo):
         """Resolver de login que crea una sesión"""
-        # Obtener argumentos del ResolverInfo
+        # Obtener argumentos del ResolverInfo (estilo Go)
         username = info.args.get('username')
         password = info.args.get('password')
         

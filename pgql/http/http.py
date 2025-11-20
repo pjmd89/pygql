@@ -125,7 +125,7 @@ def assign_resolvers(
             
             # Ejecutar resolver solo con resolver_info (estilo Go)
             # parent está disponible en resolver_info.parent
-            return original_resolver(resolver_info, **snake_kwargs)
+            return original_resolver(resolver_info)
         
         return authorized_resolver
     

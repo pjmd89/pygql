@@ -7,7 +7,7 @@ Este ejemplo demuestra:
 3. Uso en queries con validación automática
 """
 
-from pgql import HTTPServer, Scalar, ScalarResolved
+from pgql import HTTPServer, Scalar, ScalarResolved, new_warning, new_fatal
 from datetime import datetime
 from urllib.parse import urlparse
 import json
@@ -33,9 +33,9 @@ class DateScalar(Scalar):
         try:
             if isinstance(resolved.value, str):
                 return datetime.strptime(resolved.value, "%Y-%m-%d"), None
-            return None, ValueError(f"Expected string, got {type(resolved.value)}")
+            return None, new_fatal(f"Expected string, got {type(resolved.value).__name__}")
         except ValueError:
-            return None, ValueError(f"Invalid date format: {resolved.value}. Expected YYYY-MM-DD")
+            return None, new_warning(f"Invalid date format: {resolved.value}. Expected YYYY-MM-DD")
 
 
 # 2. Custom Scalar: URL
@@ -56,11 +56,11 @@ class URLScalar(Scalar):
             parsed = urlparse(url)
             
             if not parsed.scheme or not parsed.netloc:
-                return None, ValueError(f"Invalid URL: {url}. Must include scheme and domain")
+                return None, new_warning(f"Invalid URL: {url}. Must include scheme and domain")
             
             return url, None
         except Exception as e:
-            return None, ValueError(f"URL parsing error: {e}")
+            return None, new_fatal(f"URL parsing error: {e}")
 
 
 # 3. Custom Scalar: JSON
@@ -86,9 +86,9 @@ class JSONScalar(Scalar):
             try:
                 return json.loads(resolved.value), None
             except json.JSONDecodeError as e:
-                return None, ValueError(f"Invalid JSON: {e}")
+                return None, new_warning(f"Invalid JSON: {e}")
         
-        return None, ValueError("Expected JSON object or string")
+        return None, new_warning("Expected JSON object or string")
 
 
 # 4. Resolvers

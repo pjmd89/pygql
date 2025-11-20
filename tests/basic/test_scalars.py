@@ -7,6 +7,7 @@ sys.path.insert(0, '/home/munozp/Proyectos/python/pygql')
 
 # Importar directamente desde el módulo base sin cargar HTTPServer
 from pgql.resolvers.base import Scalar, ScalarResolved
+from pgql import new_warning, new_fatal
 from datetime import datetime
 from urllib.parse import urlparse
 import json
@@ -27,9 +28,9 @@ class DateScalar(Scalar):
         try:
             if isinstance(resolved.value, str):
                 return datetime.strptime(resolved.value, "%Y-%m-%d"), None
-            return None, ValueError(f"Expected string, got {type(resolved.value)}")
+            return None, new_fatal(f"Expected string, got {type(resolved.value).__name__}")
         except ValueError:
-            return None, ValueError(f"Invalid date format: {resolved.value}")
+            return None, new_warning(f"Invalid date format: {resolved.value}")
 
 
 # 2. URLScalar
@@ -46,10 +47,10 @@ class URLScalar(Scalar):
             url = str(resolved.value)
             parsed = urlparse(url)
             if not parsed.scheme or not parsed.netloc:
-                return None, ValueError(f"Invalid URL: {url}")
+                return None, new_warning(f"Invalid URL: {url}")
             return url, None
         except Exception as e:
-            return None, ValueError(f"URL parsing error: {e}")
+            return None, new_fatal(f"URL parsing error: {e}")
 
 
 # 3. JSONScalar
@@ -68,8 +69,8 @@ class JSONScalar(Scalar):
             try:
                 return json.loads(resolved.value), None
             except json.JSONDecodeError as e:
-                return None, ValueError(f"Invalid JSON: {e}")
-        return None, ValueError("Expected JSON object or string")
+                return None, new_warning(f"Invalid JSON: {e}")
+        return None, new_warning("Expected JSON object or string")
 
 
 # Tests
@@ -102,7 +103,8 @@ def test_date_scalar():
     result, error = scalar.assess(resolved)
     assert result is None, f"Expected None, got {result}"
     assert error is not None, "Expected error"
-    assert isinstance(error, ValueError), f"Expected ValueError, got {type(error)}"
+    from pgql import Warning
+    assert isinstance(error, Warning), f"Expected Warning, got {type(error)}"
     print(f"    ✅ PASS: 'invalid-date' → Error: {error}")
     
     # Test 4: set() con None

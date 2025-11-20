@@ -7,6 +7,12 @@ from abc import ABC, abstractmethod
 from typing import Any, Optional, Tuple, Dict
 from dataclasses import dataclass
 
+# Import error types for type hints
+# Avoid circular imports by using TYPE_CHECKING
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from ..errors import GQLError
+
 
 @dataclass
 class ResolverInfo:
@@ -123,7 +129,7 @@ class Scalar(ABC):
     """
     
     @abstractmethod
-    def set(self, value: Any) -> Tuple[Any, Optional[Exception]]:
+    def set(self, value: Any) -> Tuple[Any, Optional['GQLError']]:
         """
         Normalize and validate output values (resolver → client).
         
@@ -143,16 +149,29 @@ class Scalar(ABC):
         Returns:
             A tuple of (normalized_value, error):
                 - normalized_value: JSON-serializable value or None
-                - error: Exception instance if validation failed, None otherwise
+                - error: GQLError instance (Warning/Fatal) if validation failed, None otherwise
                 
         Note:
             Return (None, None) for null values.
-            Return (None, Exception(...)) for validation errors.
+            Return (None, new_fatal("message")) for validation errors.
+            
+        Example:
+            from pgql import new_fatal, new_warning
+            
+            def set(self, value):
+                if value is None:
+                    return None, None
+                
+                if isinstance(value, datetime):
+                    return value.strftime("%Y-%m-%d"), None
+                
+                # Fatal error - stops execution
+                return None, new_fatal(f"Expected datetime, got {type(value).__name__}")
         """
         pass
     
     @abstractmethod
-    def assess(self, resolved: ScalarResolved) -> Tuple[Any, Optional[Exception]]:
+    def assess(self, resolved: ScalarResolved) -> Tuple[Any, Optional['GQLError']]:
         """
         Validate and parse input values (client → resolver).
         
@@ -175,11 +194,29 @@ class Scalar(ABC):
         Returns:
             A tuple of (parsed_value, error):
                 - parsed_value: Python native type or None
-                - error: Exception instance if parsing failed, None otherwise
+                - error: GQLError instance (Warning/Fatal) if parsing failed, None otherwise
                 
         Note:
             Return (None, None) for null values.
-            Return (None, ValueError(...)) for invalid input.
+            Return (None, new_warning("message")) for invalid input (continues execution).
+            Return (None, new_fatal("message")) for critical errors (stops execution).
             Should accept multiple input types when reasonable (string, int, etc.)
+            
+        Example:
+            from pgql import new_warning, new_fatal
+            
+            def assess(self, resolved):
+                if resolved.value is None:
+                    return None, None
+                
+                if isinstance(resolved.value, str):
+                    try:
+                        return datetime.strptime(resolved.value, "%Y-%m-%d"), None
+                    except ValueError:
+                        # Warning - continues but reports error
+                        return None, new_warning(f"Invalid date format: {resolved.value}")
+                
+                # Fatal - stops execution
+                return None, new_fatal(f"Expected string, got {type(resolved.value).__name__}")
         """
         pass

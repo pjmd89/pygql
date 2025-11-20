@@ -7,4 +7,4 @@ server:
   routes:
     - mode: gql
       endpoint: /graphql
-      schema: tests/basic/schema_scalars
+      schema: schema_scalars

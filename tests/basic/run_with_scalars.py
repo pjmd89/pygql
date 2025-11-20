@@ -32,7 +32,8 @@ class DateScalar(Scalar):
         
         try:
             if isinstance(resolved.value, str):
-                return datetime.strptime(resolved.value, "%Y-%m-%d"), None
+                result = datetime.strptime(resolved.value, "%Y-%m-%d")
+                return result, None
             return None, new_fatal(f"Expected string, got {type(resolved.value).__name__}")
         except ValueError:
             return None, new_warning(f"Invalid date format: {resolved.value}. Expected YYYY-MM-DD")
@@ -84,7 +85,8 @@ class JSONScalar(Scalar):
         # Si es string, parsearlo
         if isinstance(resolved.value, str):
             try:
-                return json.loads(resolved.value), None
+                result = json.loads(resolved.value)
+                return result, None
             except json.JSONDecodeError as e:
                 return None, new_warning(f"Invalid JSON: {e}")
         
@@ -96,7 +98,7 @@ class QueryResolvers:
     def __init__(self):
         print("  ✅ QueryResolvers instance created")
     
-    def events(self, parent, info, after=None):
+    def events(self, info, after=None):
         """
         Query events con filtro de fecha.
         El parámetro 'after' ya viene como datetime gracias a DateScalar.
@@ -142,7 +144,7 @@ class QueryResolvers:
 if __name__ == "__main__":
     print("🚀 Starting server with custom scalars...")
     
-    server = HTTPServer("tests/basic/config_scalars.yml")
+    server = HTTPServer("config_scalars.yml")
     
     # Registrar custom scalars ANTES de gql()
     print("📝 Registering custom scalars...")

@@ -125,7 +125,7 @@ def assign_resolvers(
             
             # Ejecutar resolver solo con resolver_info (estilo Go)
             # parent está disponible en resolver_info.parent
-            return original_resolver(resolver_info)
+            return original_resolver(resolver_info, **snake_kwargs)
         
         return authorized_resolver
     
@@ -251,11 +251,9 @@ class HTTPServer:
                 # Crear wrapper para integrar con graphql-core
                 def make_serialize(scalar_obj):
                     def serialize(value):
-                        print(f"         [SERIALIZE] {scalar_obj.__class__.__name__}: {value} ({type(value)})")
                         result, error = scalar_obj.set(value)
                         if error:
                             raise error
-                        print(f"         [SERIALIZE] → {result}")
                         return result
                     return serialize
                 

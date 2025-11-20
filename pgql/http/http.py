@@ -27,11 +27,13 @@ def assign_resolvers(schema: GraphQLSchema, classes: dict[str, type]) -> GraphQL
             return_type_name = get_base_type_name(field.type)
             
             if return_type_name and return_type_name in classes:
-                cls = classes[return_type_name]
-                if hasattr(cls, field_name):
-                    method = getattr(cls, field_name)
+                resolver_obj = classes[return_type_name]
+                if hasattr(resolver_obj, field_name):
+                    method = getattr(resolver_obj, field_name)
                     field.resolve = method
-                    print(f"✅ Asignado {cls.__name__}.{field_name} a {graphql_type.name}.{field_name}")
+                    # Obtener el nombre de la clase (funciona para instancias y clases)
+                    resolver_name = resolver_obj.__class__.__name__ if not isinstance(resolver_obj, type) else resolver_obj.__name__
+                    print(f"✅ Asignado {resolver_name}.{field_name} a {graphql_type.name}.{field_name}")
     
     for type_name, graphql_type in schema.type_map.items():
         if isinstance(graphql_type, GraphQLObjectType):

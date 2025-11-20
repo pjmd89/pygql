@@ -1,9 +1,8 @@
 class User:
-    @staticmethod
-    def getUser(parent, info):
+    def getUser(self, parent, info):
         return {'id': 1, 'name': 'John Doe', 'email': 'john@example.com'}
-    @staticmethod
-    def getUsers(parent, info):
+    
+    def getUsers(self, parent, info):
         return [
             {'id': 1, 'name': 'Jose', 'email': 'john@example.com'},
             {'id': 2, 'name': 'Mario', 'email': 'jane@example.com'}

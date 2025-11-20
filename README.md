@@ -11,6 +11,8 @@ A lightweight Python GraphQL server framework with automatic resolver mapping, s
 - ⚡ **Async Support**: Built on Starlette and Uvicorn for high-performance async handling
 - 🔧 **YAML Configuration**: Simple YAML-based server configuration
 - 📦 **Type Support**: Full support for `extend type`, nested types, and GraphQL type modifiers
+- 🔐 **Authorization System**: Intercept resolver calls with `on_authorize` function
+- 🍪 **Session Management**: Built-in session store with automatic cookie handling
 
 ## Installation
 
@@ -203,6 +205,130 @@ This works with tools like:
 - Postman
 
 ## Advanced Usage
+
+### Authorization Interceptor
+
+pgql allows you to intercept every resolver call to implement authorization logic using `on_authorize`:
+
+```python
+from pgql import HTTPServer, AuthorizeInfo
+
+def on_authorize(auth_info: AuthorizeInfo) -> bool:
+    """
+    Intercept every resolver call for authorization
+    
+    Args:
+        auth_info.operation: 'query', 'mutation', or 'subscription'
+        auth_info.src_type: Parent GraphQL type invoking the resolver (e.g., 'User' for User.company)
+        auth_info.dst_type: GraphQL type being executed (e.g., 'Company' for User.company)
+        auth_info.resolver: Field/resolver name (e.g., 'getUser', 'company')
+        auth_info.session_id: Session ID from cookie (None if not present)
+    
+    Returns:
+        True to allow execution, False to deny
+    """
+    # Deny access if no session
+    if not auth_info.session_id:
+        return False
+    
+    # Restrict specific field access based on parent type
+    if auth_info.src_type == "User" and auth_info.resolver == "company":
+        return auth_info.session_id == "admin123"  # Only admin can access User.company
+    
+    return True
+
+server = HTTPServer('config.yml')
+server.on_authorize(on_authorize)  # Register authorization function
+server.gql({...})
+```
+
+**Session Management:**
+
+pgql extracts `session_id` from cookies automatically. Set the cookie in your client:
+
+```bash
+curl -X POST http://localhost:8080/graphql \
+  -H "Content-Type: application/json" \
+  -H "Cookie: session_id=abc123" \
+  -d '{"query": "{ getUsers { id } }"}'
+```
+
+**Authorization Flow Example:**
+
+When querying `{ getUser { id company { name } } }`:
+1. First call: `Query.getUser → User` (src_type='Query', dst_type='User', resolver='getUser')
+2. Second call: `User.company → Company` (src_type='User', dst_type='Company', resolver='company')
+
+**Note:** The `on_authorize` function is optional. If not set, all resolvers execute without authorization checks.
+
+### Session Management
+
+pgql includes a built-in session store for managing user sessions:
+
+```python
+from pgql import HTTPServer, Session
+
+server = HTTPServer('config.yml')
+
+# Create a new session
+session = server.create_session(max_age=3600)  # 1 hour
+
+# Store any data in the session
+session.set('user_id', 123)
+session.set('username', 'john')
+session.set('roles', ['admin', 'user'])
+session.set('preferences', {'theme': 'dark'})
+
+# Retrieve session
+session = server.get_session(session_id)
+user_id = session.get('user_id')
+
+# Delete session (logout)
+server.delete_session(session_id)
+```
+
+**Using Sessions in Resolvers:**
+
+```python
+class UserResolver:
+    def __init__(self, server):
+        self.server = server
+    
+    def login(self, parent, info, username, password):
+        # Create session on successful login
+        session = self.server.create_session(max_age=7200)
+        session.set('user_id', 123)
+        session.set('authenticated', True)
+        
+        # Mark session to set cookie in response
+        info.context['new_session'] = session
+        
+        return {'success': True, 'session_id': session.session_id}
+    
+    def getUser(self, parent, info):
+        # Access session data
+        session = info.context.get('session')
+        if session and session.get('authenticated'):
+            return {'id': session.get('user_id'), 'name': 'John'}
+        return None
+```
+
+**Configure cookie name in YAML:**
+
+```yaml
+http_port: 8080
+cookie_name: my_session_id  # Custom cookie name
+server:
+  host: localhost
+  routes:
+    - mode: gql
+      endpoint: /graphql
+      schema: schema
+```
+
+For complete session documentation, see [SESSIONS.md](SESSIONS.md).
+
+**Note:** The `on_authorize` function is optional. If not set, all resolvers execute without authorization checks.
 
 ### Nested Schema Organization
 

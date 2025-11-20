@@ -4,8 +4,56 @@ Provides infrastructure for implementing custom GraphQL scalars and directives.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Optional, Tuple
+from typing import Any, Optional, Tuple, Dict
 from dataclasses import dataclass
+
+
+@dataclass
+class ResolverInfo:
+    """
+    Information passed to resolvers, compatible with Go's ResolverInfo structure.
+    
+    This is the main info object that all resolvers receive, containing all
+    execution context and metadata about the current field resolution.
+    
+    Similar to Go, resolvers receive ONLY this info object (no separate parent parameter).
+    
+    Attributes:
+        operation: Type of GraphQL operation ("query", "mutation", "subscription")
+        resolver: Name of the field being resolved
+        args: Dictionary of arguments passed to this field (already snake_case)
+        parent: The parent/source value for this resolver
+        type_name: GraphQL type name of the current resolver
+        parent_type_name: GraphQL type name of the parent
+        session_id: Session ID from cookie/context (if available)
+        context: Full GraphQL context dict (contains request, session_id, etc.)
+        field_name: Original field name from schema (camelCase)
+        
+    Example:
+        def get_user(self, info: ResolverInfo):
+            # Access parent value
+            parent = info.parent
+            
+            # Access arguments (already in snake_case)
+            user_id = info.args.get('user_id')  # from GraphQL userId
+            
+            # Check session
+            if not info.session_id:
+                raise PermissionError("Authentication required")
+            
+            # Access operation type
+            if info.operation == "query":
+                return {"id": user_id, "name": "John"}
+    """
+    operation: str              # "query", "mutation", "subscription"
+    resolver: str               # Field name (camelCase from schema)
+    args: Dict[str, Any]       # Arguments (snake_case keys)
+    parent: Any                # Parent/source value
+    type_name: str             # Current GraphQL type
+    parent_type_name: Optional[str] = None  # Parent GraphQL type
+    session_id: Optional[str] = None        # Session ID
+    context: Optional[Dict[str, Any]] = None  # Full context
+    field_name: Optional[str] = None         # Original field name
 
 
 @dataclass

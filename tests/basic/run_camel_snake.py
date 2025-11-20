@@ -16,18 +16,26 @@ Resolvers Python usan snake_case (convención):
 El framework convierte automáticamente.
 """
 
-from pgql import HTTPServer
+from pgql import HTTPServer, ResolverInfo
 
 # Resolvers con métodos en snake_case (convención Python)
 class QueryResolvers:
-    def get_user(self, parent, info, user_id):
+    def get_user(self, info: ResolverInfo):
         """
         GraphQL: getUser(userId: ID!)
-        Python:  get_user(user_id)
+        Python:  get_user(info.args['user_id'])
         
-        ✅ Conversión automática
+        ✅ Conversión automática:
+           - Método: getUser → get_user
+           - Argumento: userId → user_id (en info.args)
         """
-        print(f"🔍 get_user llamado con user_id={user_id}")
+        user_id = info.args.get('user_id')
+        
+        print(f"🔍 get_user llamado")
+        print(f"   user_id={user_id} (convertido de userId)")
+        print(f"   operation={info.operation}")
+        print(f"   type={info.type_name}")
+        
         return {
             'id': user_id,
             'firstName': 'John',
@@ -35,14 +43,16 @@ class QueryResolvers:
             'emailAddress': 'john.doe@example.com'
         }
     
-    def get_all_users(self, parent, info):
+    def get_all_users(self, info: ResolverInfo):
         """
         GraphQL: getAllUsers
-        Python:  get_all_users
+        Python:  get_all_users(info)
         
-        ✅ Conversión automática
+        ✅ Conversión automática de método
         """
         print("🔍 get_all_users llamado")
+        print(f"   args={info.args}")
+        
         return [
             {
                 'id': '1',

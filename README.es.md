@@ -62,17 +62,45 @@ extend type Query {
 
 ```python
 # resolvers/user.py
+from pgql import ResolverInfo
+
 class User:
-    def getUser(self, parent, info, id):
-        # Tu lógica aquí
-        return {'id': id, 'name': 'John Doe', 'email': 'john@example.com'}
+    def get_user(self, info: ResolverInfo):
+        """
+        Resolvers reciben SOLO info (estilo Go)
+        - Parent: info.parent
+        - Argumentos: info.args (snake_case)
+        - Sesión: info.session_id
+        
+        GraphQL: getUser(userId: ID!)
+        Python: info.args.get('user_id')
+        """
+        user_id = info.args.get('user_id')
+        
+        # Acceso a sesión y contexto
+        if info.session_id:
+            print(f"Usuario autenticado: {info.session_id}")
+        
+        return {
+            'id': user_id, 
+            'name': 'John Doe', 
+            'email': 'john@example.com'
+        }
     
-    def getUsers(self, parent, info):
+    def get_users(self, info: ResolverInfo):
         return [
             {'id': 1, 'name': 'John', 'email': 'john@example.com'},
             {'id': 2, 'name': 'Jane', 'email': 'jane@example.com'}
         ]
 ```
+
+> **💡 Nota**: Resolvers reciben **solo `info`** (compatible con Go):
+> - `info.parent`: Valor del parent
+> - `info.args`: Argumentos (snake_case)
+> - `info.operation`: "query"/"mutation"/"subscription"
+> - `info.session_id`: ID de sesión
+> - `info.type_name`: Tipo GraphQL actual
+> - Ver [RESOLVER_INFO.md](RESOLVER_INFO.md) para más detalles
 
 ### 3. Configura el Servidor
 
@@ -363,6 +391,14 @@ server:
       endpoint: /admin/graphql
       schema: admin_schema
 ```
+
+## 📚 Documentación Adicional
+
+- **[RESOLVER_INFO.md](RESOLVER_INFO.md)** - Estructura `ResolverInfo` para resolvers (compatible con Go)
+- **[NAMING_CONVENTIONS.md](NAMING_CONVENTIONS.md)** - Convenciones de nombres camelCase ↔ snake_case
+- **[SCALARS.md](SCALARS.md)** - Custom Scalars (Date, URL, JSON, etc.)
+- **[SESSIONS.md](SESSIONS.md)** - Manejo de sesiones y cookies
+- **[AUTHORIZATION.md](AUTHORIZATION.md)** - Interceptor de autorización
 
 ## Requisitos
 

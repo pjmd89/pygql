@@ -4,7 +4,7 @@ from graphql.type.definition import GraphQLObjectType, GraphQLNonNull, GraphQLLi
 import uvicorn
 import re
 from pgql.http.config_http_enum import ConfigHTTPEnum
-from pgql.resolvers.base import Scalar, ScalarResolved
+from pgql.resolvers.base import Scalar, ScalarResolved, ResolverInfo
 from .config import HTTPConfig, RouteConfig
 from .authorize_info import AuthorizeInfo
 from .session import SessionStore, Session
@@ -51,13 +51,26 @@ def assign_resolvers(
             # Convertir argumentos de camelCase a snake_case
             snake_kwargs = {camel_to_snake(key): value for key, value in kwargs.items()}
             
+            # Obtener session_id del contexto
+            session_id = None
+            if info.context and isinstance(info.context, dict):
+                session_id = info.context.get('session_id')
+            
+            # Crear ResolverInfo compatible con Go
+            resolver_info = ResolverInfo(
+                operation=operation,
+                resolver=resolver_name,
+                args=snake_kwargs,
+                parent=parent,
+                type_name=dst_type,
+                parent_type_name=src_type,
+                session_id=session_id,
+                context=info.context if info.context else {},
+                field_name=resolver_name
+            )
+            
             # Si hay función de autorización, ejecutarla
             if on_authorize_fn:
-                # Obtener session_id del contexto
-                session_id = None
-                if info.context and isinstance(info.context, dict):
-                    session_id = info.context.get('session_id')
-                
                 # Crear objeto de autorización
                 auth_info = AuthorizeInfo(
                     operation=operation,
@@ -73,8 +86,9 @@ def assign_resolvers(
                 if not authorized:
                     raise PermissionError(f"No autorizado para ejecutar {dst_type}.{resolver_name}")
             
-            # Si está autorizado o no hay función de autorización, ejecutar resolver
-            return original_resolver(parent, info, **snake_kwargs)
+            # Ejecutar resolver solo con resolver_info (estilo Go)
+            # parent está disponible en resolver_info.parent
+            return original_resolver(resolver_info)
         
         return authorized_resolver
     

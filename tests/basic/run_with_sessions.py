@@ -1,4 +1,4 @@
-from pgql import HTTPServer, AuthorizeInfo, Session
+from pgql import HTTPServer, AuthorizeInfo, Session, ResolverInfo
 from resolvers.gql.user.user import User
 from resolvers.gql.company.company import Company
 
@@ -32,8 +32,12 @@ class UserWithSession(User):
         super().__init__()
         self.server = server
     
-    def login(self, parent, info, username: str, password: str):
+    def login(self, info: ResolverInfo):
         """Resolver de login que crea una sesión"""
+        # Obtener argumentos del ResolverInfo
+        username = info.args.get('username')
+        password = info.args.get('password')
+        
         # Validar credenciales (simplificado)
         if username == "admin" and password == "secret":
             # Crear nueva sesión
@@ -61,7 +65,7 @@ class UserWithSession(User):
             'message': 'Credenciales inválidas'
         }
     
-    def get_user(self, parent, info):
+    def get_user(self, info: ResolverInfo):
         """Obtener usuario desde la sesión"""
         session = info.context.get('session')
         

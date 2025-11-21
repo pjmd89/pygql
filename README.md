@@ -13,6 +13,7 @@ A lightweight Python GraphQL server framework with automatic resolver mapping, s
 - 📦 **Type Support**: Full support for `extend type`, nested types, and GraphQL type modifiers
 - 🔐 **Authorization System**: Intercept resolver calls with `on_authorize` function
 - 🍪 **Session Management**: Built-in session store with automatic cookie handling
+- 🌐 **CORS Validation**: Dynamic origin validation with `on_http_check_origin` callback
 - 🔗 **FastAPI Integration**: Mount FastAPI apps alongside GraphQL in a single Uvicorn instance
 
 ## Installation
@@ -261,6 +262,71 @@ When querying `{ getUser { id company { name } } }`:
 2. Second call: `User.company → Company` (src_type='User', dst_type='Company', resolver='company')
 
 **Note:** The `on_authorize` function is optional. If not set, all resolvers execute without authorization checks.
+
+### CORS Origin Validation
+
+pgql provides dynamic CORS origin validation using the `on_http_check_origin` callback:
+
+```python
+from pgql import HTTPServer
+
+# Define allowed origins
+ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "https://myapp.com",
+    "https://app.example.com"
+]
+
+def check_origin(origin: str) -> bool:
+    """
+    Validate CORS origin dynamically
+    
+    Args:
+        origin: The origin header from the request (e.g., "http://localhost:3000")
+    
+    Returns:
+        True to allow the origin, False to deny (returns 403)
+    """
+    return origin in ALLOWED_ORIGINS
+
+server = HTTPServer('config.yml')
+server.on_http_check_origin(check_origin)  # Register CORS validator
+server.gql({...})
+```
+
+**Default Behavior:**
+
+By default, all origins are allowed (returns `True`). The validator only runs when you register a callback.
+
+**CORS Headers:**
+
+When an origin is allowed, pgql automatically adds these headers:
+- `Access-Control-Allow-Origin`: The validated origin
+- `Access-Control-Allow-Credentials`: `true`
+- `Access-Control-Allow-Methods`: `*`
+- `Access-Control-Allow-Headers`: `*`
+
+**Preflight Requests:**
+
+OPTIONS preflight requests are handled automatically with the same origin validation.
+
+**Testing:**
+
+```bash
+# Allowed origin - returns 200 with CORS headers
+curl -X POST http://localhost:8080/graphql \
+  -H "Content-Type: application/json" \
+  -H "Origin: http://localhost:3000" \
+  -d '{"query": "{ getUsers { id } }"}'
+
+# Blocked origin - returns 403
+curl -X POST http://localhost:8080/graphql \
+  -H "Content-Type: application/json" \
+  -H "Origin: http://malicious-site.com" \
+  -d '{"query": "{ getUsers { id } }"}'
+```
+
+**Note:** The `on_http_check_origin` function is optional. If not set, all origins are permitted (permissive by default).
 
 ### Session Management
 

@@ -56,6 +56,70 @@ server.mount("/api", fastapi_app, name="fastapi")
 server.start()
 ```
 
+### cors_example.py
+
+Demonstrates dynamic CORS origin validation using the `on_http_check_origin` callback, allowing you to control which domains can access your GraphQL API.
+
+**What it shows:**
+- Dynamic CORS origin validation with whitelist
+- Using `on_http_check_origin` callback (similar to `on_authorize`)
+- Automatic CORS headers injection
+- Preflight OPTIONS request handling
+- Default permissive behavior
+
+**To run:**
+
+```bash
+cd examples
+python cors_example.py
+```
+
+**Test CORS validation:**
+
+```bash
+# Allowed origin - returns 200 with CORS headers
+curl -X POST http://localhost:8080/graphql \
+  -H "Content-Type: application/json" \
+  -H "Origin: http://localhost:3000" \
+  -d '{"query": "{ getUsers { id name email } }"}'
+
+# Blocked origin - returns 403
+curl -X POST http://localhost:8080/graphql \
+  -H "Content-Type: application/json" \
+  -H "Origin: http://malicious-site.com" \
+  -d '{"query": "{ getUsers { id name email } }"}'
+
+# View CORS headers
+curl -I -X POST http://localhost:8080/graphql \
+  -H "Content-Type: application/json" \
+  -H "Origin: https://myapp.com"
+
+# Test preflight request
+curl -X OPTIONS http://localhost:8080/graphql \
+  -H "Origin: http://localhost:3000" \
+  -H "Access-Control-Request-Method: POST"
+```
+
+**Key code:**
+
+```python
+from pgql import HTTPServer
+
+ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "https://myapp.com"
+]
+
+def check_origin(origin: str) -> bool:
+    """Validate CORS origin"""
+    return origin in ALLOWED_ORIGINS
+
+server = HTTPServer('config.yml')
+server.on_http_check_origin(check_origin)  # Register CORS validator
+server.gql({'User': UserResolver()})
+server.start()
+```
+
 ## Requirements
 
 Some examples require additional dependencies:

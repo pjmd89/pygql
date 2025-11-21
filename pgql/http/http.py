@@ -29,6 +29,7 @@ class HTTPServer:
         self.__mounts: list[Mount] = []  # Para montar aplicaciones ASGI adicionales
         self.__schemas: dict[str, GraphQLSchema] = {}
         self.__on_authorize: Optional[Callable[[AuthorizeInfo], bool]] = None
+        self.__on_http_check_origin: Optional[Callable[[str], bool]] = None  # Callback para validar orígenes CORS
         self.__resolvers: dict[str, type] = {}
         self.__session_store = SessionStore()  # Almacén de sesiones
         self.__scalars: dict[str, Scalar] = {}  # Registro de custom scalars
@@ -207,12 +208,28 @@ class HTTPServer:
                 directives=self.__directives
             )
             
-            # Re-asignar resolvers
-            for route in self.__httpConfig.server.routes:
-                if route.mode == ConfigHTTPEnum.MODE_GQL:
-                    schema = self.__load_schema(route.schema)
-                    schema = self.__executor.assign_resolvers(schema, self.__resolvers)
-                    self.__schemas[route.endpoint] = schema
+            # Re-asignar resolvers con nuevo ejecutor
+            for endpoint, schema in self.__schemas.items():
+                self.__schemas[endpoint] = self.__executor.assign_resolvers(schema, self.__resolvers)
+    
+    def on_http_check_origin(self, check_origin_fn: Callable[[str], bool]):
+        """Registra función para validar orígenes CORS dinámicamente
+        
+        Args:
+            check_origin_fn: Función que recibe el origin (string) y retorna True si está permitido
+        
+        Example:
+            def my_check_origin(origin: str) -> bool:
+                allowed = ["http://localhost:3000", "https://miapp.com"]
+                return origin in allowed
+            
+            server.on_http_check_origin(my_check_origin)
+            
+        Note:
+            Por defecto, todos los orígenes están permitidos (retorna True).
+            Si no se define esta función, CORS permitirá todos los orígenes.
+        """
+        self.__on_http_check_origin = check_origin_fn
     
     def scalar(self, name: str, scalar_instance: Scalar):
         """Registra un scalar personalizado
@@ -391,7 +408,61 @@ class HTTPServer:
     def start(self):
         # Combinar routes y mounts
         all_routes = self.__routes + self.__mounts
+        
+        # Crear app Starlette
         self.__app = Starlette(routes=all_routes, debug=self.__httpConfig.debug)
+        
+        # Añadir middleware CORS con validación dinámica
+        # Crear middleware personalizado que valida el origin dinámicamente
+        check_origin_fn = self.__on_http_check_origin or (lambda origin: True)  # Por defecto permite todos
+        
+        @self.__app.middleware("http")
+        async def cors_middleware(request: Request, call_next):
+            # Obtener el origin del request
+            origin = request.headers.get("origin", "")
+            
+            # Si no hay origin o está permitido, procesar request
+            if not origin or check_origin_fn(origin):
+                response = await call_next(request)
+                
+                # Añadir headers CORS si hay origin
+                if origin:
+                    response.headers["Access-Control-Allow-Origin"] = origin
+                    response.headers["Access-Control-Allow-Credentials"] = "true"
+                    response.headers["Access-Control-Allow-Methods"] = "*"
+                    response.headers["Access-Control-Allow-Headers"] = "*"
+                
+                return response
+            else:
+                # Origin no permitido
+                return JSONResponse(
+                    {"error": "Origin not allowed"},
+                    status_code=403,
+                    headers={"Content-Type": "application/json"}
+                )
+        
+        # Manejar preflight requests (OPTIONS)
+        @self.__app.middleware("http")
+        async def cors_preflight_middleware(request: Request, call_next):
+            if request.method == "OPTIONS":
+                origin = request.headers.get("origin", "")
+                
+                if not origin or check_origin_fn(origin):
+                    return Response(
+                        status_code=200,
+                        headers={
+                            "Access-Control-Allow-Origin": origin if origin else "*",
+                            "Access-Control-Allow-Methods": "*",
+                            "Access-Control-Allow-Headers": "*",
+                            "Access-Control-Allow-Credentials": "true",
+                            "Access-Control-Max-Age": "86400"
+                        }
+                    )
+                else:
+                    return JSONResponse({"error": "Origin not allowed"}, status_code=403)
+            
+            return await call_next(request)
+        
         uvicorn.run(self.__app, host=self.__httpConfig.server.host, port=self.__httpConfig.http_port)
 
     @staticmethod

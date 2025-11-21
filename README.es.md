@@ -13,6 +13,7 @@ Un framework ligero de servidor GraphQL en Python con mapeo automático de resol
 - 📦 **Soporte de Tipos**: Soporte completo para `extend type`, tipos anidados y modificadores de tipos GraphQL
 - 🔐 **Sistema de Autorización**: Intercepta llamadas a resolvers con la función `on_authorize`
 - 🍪 **Gestión de Sesiones**: Almacén de sesiones integrado con manejo automático de cookies
+- 🌐 **Validación CORS**: Validación dinámica de orígenes con callback `on_http_check_origin`
 - 🔗 **Integración con FastAPI**: Monta aplicaciones FastAPI junto con GraphQL en una única instancia de Uvicorn
 
 ## Instalación
@@ -289,6 +290,71 @@ Al consultar `{ getUser { id company { name } } }`:
 2. Segunda llamada: `User.company → Company` (src_type='User', dst_type='Company', resolver='company')
 
 **Nota:** La función `on_authorize` es opcional. Si no se configura, todos los resolvers se ejecutan sin verificaciones de autorización.
+
+### Validación de Orígenes CORS
+
+pgql proporciona validación dinámica de orígenes CORS usando el callback `on_http_check_origin`:
+
+```python
+from pgql import HTTPServer
+
+# Define los orígenes permitidos
+ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "https://miapp.com",
+    "https://app.ejemplo.com"
+]
+
+def check_origin(origin: str) -> bool:
+    """
+    Valida el origen CORS dinámicamente
+    
+    Args:
+        origin: El header de origen de la petición (ej: "http://localhost:3000")
+    
+    Returns:
+        True para permitir el origen, False para denegar (retorna 403)
+    """
+    return origin in ALLOWED_ORIGINS
+
+server = HTTPServer('config.yml')
+server.on_http_check_origin(check_origin)  # Registrar validador CORS
+server.gql({...})
+```
+
+**Comportamiento Predeterminado:**
+
+Por defecto, todos los orígenes están permitidos (retorna `True`). El validador solo se ejecuta cuando registras un callback.
+
+**Headers CORS:**
+
+Cuando un origen es permitido, pgql agrega automáticamente estos headers:
+- `Access-Control-Allow-Origin`: El origen validado
+- `Access-Control-Allow-Credentials`: `true`
+- `Access-Control-Allow-Methods`: `*`
+- `Access-Control-Allow-Headers`: `*`
+
+**Peticiones Preflight:**
+
+Las peticiones OPTIONS preflight se manejan automáticamente con la misma validación de origen.
+
+**Pruebas:**
+
+```bash
+# Origen permitido - retorna 200 con headers CORS
+curl -X POST http://localhost:8080/graphql \
+  -H "Content-Type: application/json" \
+  -H "Origin: http://localhost:3000" \
+  -d '{"query": "{ getUsers { id } }"}'
+
+# Origen bloqueado - retorna 403
+curl -X POST http://localhost:8080/graphql \
+  -H "Content-Type: application/json" \
+  -H "Origin: http://malicious-site.com" \
+  -d '{"query": "{ getUsers { id } }"}'
+```
+
+**Nota:** La función `on_http_check_origin` es opcional. Si no se configura, todos los orígenes están permitidos (permisivo por defecto).
 
 ### Gestión de Sesiones
 

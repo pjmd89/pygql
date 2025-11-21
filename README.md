@@ -13,6 +13,7 @@ A lightweight Python GraphQL server framework with automatic resolver mapping, s
 - 📦 **Type Support**: Full support for `extend type`, nested types, and GraphQL type modifiers
 - 🔐 **Authorization System**: Intercept resolver calls with `on_authorize` function
 - 🍪 **Session Management**: Built-in session store with automatic cookie handling
+- 🔗 **FastAPI Integration**: Mount FastAPI apps alongside GraphQL in a single Uvicorn instance
 
 ## Installation
 
@@ -428,6 +429,64 @@ server:
     - mode: gql
       endpoint: /admin/graphql
       schema: admin_schema
+```
+
+### Integration with FastAPI
+
+pgql can be integrated with existing FastAPI applications using the `mount()` method, allowing you to run both frameworks in a single Uvicorn instance:
+
+```python
+from fastapi import FastAPI
+from pgql import HTTPServer
+from resolvers.user import User
+
+# Create your FastAPI app
+fastapi_app = FastAPI(title="My API")
+
+@fastapi_app.get("/api/")
+async def read_root():
+    return {"message": "Hello from FastAPI!"}
+
+@fastapi_app.get("/api/users")
+async def get_users():
+    return {"users": [{"id": 1, "name": "Alice"}]}
+
+# Create pygql server
+server = HTTPServer('config.yml')
+server.gql({'User': User()})
+
+# Mount FastAPI app on /api path
+server.mount("/api", fastapi_app, name="fastapi")
+
+# Start single uvicorn server with both apps
+server.start()
+```
+
+**Available endpoints:**
+
+- `POST http://localhost:8080/graphql` - pygql GraphQL endpoint
+- `GET http://localhost:8080/api/` - FastAPI endpoints
+- `GET http://localhost:8080/api/users` - FastAPI endpoints
+
+**Key benefits:**
+
+- **Single Uvicorn instance**: No need to manage multiple servers
+- **Shared configuration**: Use pygql's YAML config for both
+- **Easy migration**: Add GraphQL to existing FastAPI projects without refactoring
+- **ASGI compatible**: Works with any ASGI application (FastAPI, Quart, Starlette apps, etc.)
+
+**Method signature:**
+
+```python
+def mount(self, path: str, app, name: str = None):
+    """
+    Mount an ASGI application (like FastAPI) on a specific path
+    
+    Args:
+        path: URL prefix for the mounted app (e.g., "/api")
+        app: ASGI application instance (FastAPI, etc.)
+        name: Optional name for the mount point
+    """
 ```
 
 ## Documentation

@@ -13,6 +13,7 @@ Un framework ligero de servidor GraphQL en Python con mapeo automático de resol
 - 📦 **Soporte de Tipos**: Soporte completo para `extend type`, tipos anidados y modificadores de tipos GraphQL
 - 🔐 **Sistema de Autorización**: Intercepta llamadas a resolvers con la función `on_authorize`
 - 🍪 **Gestión de Sesiones**: Almacén de sesiones integrado con manejo automático de cookies
+- 🔗 **Integración con FastAPI**: Monta aplicaciones FastAPI junto con GraphQL en una única instancia de Uvicorn
 
 ## Instalación
 
@@ -456,6 +457,64 @@ server:
     - mode: gql
       endpoint: /admin/graphql
       schema: admin_schema
+```
+
+### Integración con FastAPI
+
+pgql puede integrarse con aplicaciones FastAPI existentes usando el método `mount()`, permitiendo ejecutar ambos frameworks en una única instancia de Uvicorn:
+
+```python
+from fastapi import FastAPI
+from pgql import HTTPServer
+from resolvers.user import User
+
+# Crea tu aplicación FastAPI
+fastapi_app = FastAPI(title="Mi API")
+
+@fastapi_app.get("/api/")
+async def read_root():
+    return {"message": "¡Hola desde FastAPI!"}
+
+@fastapi_app.get("/api/users")
+async def get_users():
+    return {"users": [{"id": 1, "name": "Alice"}]}
+
+# Crea el servidor pygql
+server = HTTPServer('config.yml')
+server.gql({'User': User()})
+
+# Monta la aplicación FastAPI en la ruta /api
+server.mount("/api", fastapi_app, name="fastapi")
+
+# Inicia un único servidor uvicorn con ambas aplicaciones
+server.start()
+```
+
+**Endpoints disponibles:**
+
+- `POST http://localhost:8080/graphql` - Endpoint GraphQL de pygql
+- `GET http://localhost:8080/api/` - Endpoints de FastAPI
+- `GET http://localhost:8080/api/users` - Endpoints de FastAPI
+
+**Beneficios clave:**
+
+- **Una sola instancia de Uvicorn**: No necesitas gestionar múltiples servidores
+- **Configuración compartida**: Usa la configuración YAML de pygql para ambos
+- **Migración fácil**: Añade GraphQL a proyectos FastAPI existentes sin refactorizar
+- **Compatible con ASGI**: Funciona con cualquier aplicación ASGI (FastAPI, Quart, aplicaciones Starlette, etc.)
+
+**Firma del método:**
+
+```python
+def mount(self, path: str, app, name: str = None):
+    """
+    Monta una aplicación ASGI (como FastAPI) en una ruta específica
+    
+    Args:
+        path: Prefijo URL para la aplicación montada (ej., "/api")
+        app: Instancia de la aplicación ASGI (FastAPI, etc.)
+        name: Nombre opcional para el punto de montaje
+    """
 ```
 
 ## 📚 Documentación Adicional

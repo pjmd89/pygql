@@ -1,4 +1,5 @@
-from pgql import ResolverInfo
+from pgql import ResolverInfo, ErrorDescriptor, LEVEL_FATAL, new_error, new_fatal
+from datetime import datetime
 
 class User:
     def get_user(self, info: ResolverInfo):
@@ -33,6 +34,48 @@ class User:
         user_input = info.args.get('input')
         
         print(f"➕ create_user llamado con input={user_input}")
+        
+        # Validar edad mínima (age viene como datetime de fecha de nacimiento)
+        birth_date = user_input.get('age')  # Es un datetime object
+        
+        if birth_date:
+            # Calcular edad actual
+            today = datetime.now()
+            age_years = today.year - birth_date.year - ((today.month, today.day) < (birth_date.month, birth_date.day))
+            
+            print(f"📅 Fecha de nacimiento: {birth_date.strftime('%Y-%m-%d')}")
+            print(f"📊 Edad calculada: {age_years} años")
+            
+            if age_years < 30:
+                # Opción 1: Con ErrorDescriptor + extensions (recomendado)
+                error_descriptor = ErrorDescriptor(
+                    message="User must be at least 30 years old",
+                    code="AGE_VALIDATION_FAILED",
+                    level=LEVEL_FATAL
+                )
+                
+                extensions = {
+                    'field': 'age',
+                    'minimumAge': 30,
+                    'providedAge': age_years,
+                    'birthDate': birth_date.strftime('%Y-%m-%d')
+                }
+                
+                raise new_error(err=error_descriptor)
+                
+                # Opción 2: Solo con mensaje (más simple, sin código)
+                # raise new_fatal(
+                #     message="User must be at least 30 years old",
+                #     extensions={'field': 'age', 'minimumAge': 30}
+                # )
+                
+                # Opción 3: Con mensaje, código y level personalizado
+                # raise new_error(
+                #     message="User must be at least 30 years old",
+                #     code="AGE_VALIDATION_FAILED",
+                #     level=LEVEL_FATAL,
+                #     extensions={'field': 'age', 'minimumAge': 30}
+                # )
         
         # Aquí normalmente guardarías el usuario en la base de datos
         new_user = {

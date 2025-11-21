@@ -65,9 +65,10 @@ class ErrorStruct:
         return result
 
 
-class GQLError:
+class GQLError(Exception):
     """
     Base class for GraphQL errors, compatible with Go's GQLError interface.
+    Now inherits from Exception to be raisable in Python.
     
     Go interface:
         type GQLError interface {
@@ -77,6 +78,7 @@ class GQLError:
     """
     
     def __init__(self, error_struct: ErrorStruct, level: ErrorLevel):
+        super().__init__(error_struct.message)
         self._error_struct = error_struct
         self._level = level
     
@@ -150,63 +152,95 @@ class ErrorDescriptor:
 
 
 def new_error(
-    err: ErrorDescriptor,
-    extensions: Optional[ExtensionError] = None
+    err: Optional[ErrorDescriptor] = None,
+    extensions: Optional[ExtensionError] = None,
+    message: Optional[str] = None,
+    code: Optional[str] = None,
+    level: Optional[ErrorLevel] = None
 ) -> GQLError:
     """
-    Create a new error (Warning or Fatal) based on descriptor.
+    Create a new error (Warning or Fatal).
+    
+    Flexible usage:
+    1. With ErrorDescriptor: new_error(err=descriptor, extensions={...})
+    2. With message only: new_error(message="Error", level=LEVEL_FATAL)
+    3. With all params: new_error(message="Error", code="CODE", level=LEVEL_FATAL, extensions={...})
+    
     Matches Go's NewError() function.
     """
-    extensions = _set_extension(extensions, err.level, err.code)
+    # Si se pasa ErrorDescriptor, usarlo
+    if err is not None:
+        final_message = err.message
+        final_code = err.code
+        final_level = err.level
+    # Si no, usar los parámetros individuales
+    else:
+        if message is None:
+            raise ValueError("Either 'err' or 'message' must be provided")
+        final_message = message
+        final_code = code or "000"
+        final_level = level or LEVEL_WARNING
+    
+    extensions = _set_extension(extensions, final_level, final_code)
     
     error_struct = ErrorStruct(
-        message=err.message,
-        code=err.code,
+        message=final_message,
+        code=final_code,
         extensions=extensions
     )
     
-    if err.level == LEVEL_FATAL:
+    if final_level == LEVEL_FATAL:
         return Fatal(error_struct)
     else:
         return Warning(error_struct)
 
 
 def new_warning(
-    message: str,
-    extensions: Optional[ExtensionError] = None
+    message: Optional[str] = None,
+    extensions: Optional[ExtensionError] = None,
+    err: Optional[ErrorDescriptor] = None
 ) -> Warning:
     """
     Create a new Warning error.
+    
+    Usage:
+    1. new_warning(message="Warning text")
+    2. new_warning(message="Warning", extensions={...})
+    3. new_warning(err=descriptor, extensions={...})
+    
     Matches Go's NewWarning() function.
     """
-    extensions = _set_extension(extensions, LEVEL_WARNING, "000")
+    if err is not None:
+        return new_error(err=err, extensions=extensions, level=LEVEL_WARNING)
     
-    error_struct = ErrorStruct(
-        message=message,
-        code="000",
-        extensions=extensions
-    )
+    if message is None:
+        raise ValueError("Either 'err' or 'message' must be provided")
     
-    return Warning(error_struct)
+    return new_error(message=message, extensions=extensions, level=LEVEL_WARNING)
 
 
 def new_fatal(
-    message: str,
-    extensions: Optional[ExtensionError] = None
+    message: Optional[str] = None,
+    extensions: Optional[ExtensionError] = None,
+    err: Optional[ErrorDescriptor] = None
 ) -> Fatal:
     """
     Create a new Fatal error.
+    
+    Usage:
+    1. new_fatal(message="Fatal error")
+    2. new_fatal(message="Fatal", extensions={...})
+    3. new_fatal(err=descriptor, extensions={...})
+    
     Matches Go's NewFatal() function.
     """
-    extensions = _set_extension(extensions, LEVEL_FATAL, "000")
+    if err is not None:
+        return new_error(err=err, extensions=extensions, level=LEVEL_FATAL)
     
-    error_struct = ErrorStruct(
-        message=message,
-        code="000",
-        extensions=extensions
-    )
+    if message is None:
+        raise ValueError("Either 'err' or 'message' must be provided")
     
-    return Fatal(error_struct)
+    return new_error(message=message, extensions=extensions, level=LEVEL_FATAL)
 
 
 def get_errors(error_list: ErrorList) -> List[Dict[str, Any]]:

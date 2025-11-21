@@ -2,6 +2,7 @@ from graphql import GraphQLSchema, build_schema, graphql, GraphQLScalarType
 from graphql.type.definition import GraphQLObjectType, GraphQLNonNull, GraphQLList, GraphQLInputObjectType
 import uvicorn
 import glob
+import contextvars
 from typing import Callable, Optional
 
 from pgql.http.config_http_enum import ConfigHTTPEnum
@@ -15,6 +16,9 @@ from starlette.applications import Starlette
 from starlette.responses import JSONResponse, Response
 from starlette.requests import Request
 from starlette.routing import Route
+
+# Cache para evitar doble ejecución de assess() durante validación y ejecución
+_scalar_cache: contextvars.ContextVar[dict] = contextvars.ContextVar('scalar_cache', default=None)
 
 class HTTPServer:
     def __init__(self, configPath: str):
@@ -63,11 +67,9 @@ class HTTPServer:
         # Registrar custom scalars en el schema
         for scalar_name, scalar_instance in self.__scalars.items():
             if scalar_name in schema.type_map:
-                print(f"🔧 Registrando scalar '{scalar_name}' en schema.type_map")
                 # Crear wrapper para integrar con graphql-core
                 def make_serialize(scalar_obj):
                     def serialize(value):
-                        print(f"📤 [serialize] {scalar_obj.__class__.__name__}.set() llamado con: {value}")
                         result, error = scalar_obj.set(value)
                         if error:
                             raise error
@@ -76,7 +78,6 @@ class HTTPServer:
                 
                 def make_parse_value(scalar_obj):
                     def parse_value(value):
-                        print(f"📥 [parse_value] {scalar_obj.__class__.__name__}.assess() llamado con: {value}")
                         resolved = ScalarResolved(
                             value=value,
                             resolver_name='',
@@ -92,7 +93,21 @@ class HTTPServer:
                     def parse_literal(ast, variable_values=None):
                         # Extraer valor del AST node
                         value = getattr(ast, 'value', None)
-                        print(f"📥 [parse_literal] {scalar_obj.__class__.__name__}.assess() llamado con AST value: {value}")
+                        
+                        # Obtener cache de ContextVar
+                        cache = _scalar_cache.get()
+                        if cache is None:
+                            cache = {}
+                            _scalar_cache.set(cache)
+                        
+                        # Crear cache key único por scalar + valor
+                        cache_key = (scalar_obj.__class__.__name__, value)
+                        
+                        # Si ya fue procesado, retornar resultado cacheado
+                        if cache_key in cache:
+                            return cache[cache_key]
+                        
+                        # Cache miss - ejecutar assess()
                         resolved = ScalarResolved(
                             value=value,
                             resolver_name='',
@@ -101,6 +116,9 @@ class HTTPServer:
                         result, error = scalar_obj.assess(resolved)
                         if error:
                             raise error
+                        
+                        # Guardar en cache
+                        cache[cache_key] = result
                         return result
                     return parse_literal
                 
@@ -117,22 +135,20 @@ class HTTPServer:
                 
                 # Reemplazar el scalar en el schema
                 schema.type_map[scalar_name] = new_scalar_type
-                print(f"      ✅ Scalar '{scalar_name}' reemplazado en type_map")
                 
                 # CRÍTICO: Actualizar todas las referencias a este scalar en los campos
                 for type_name, graphql_type in schema.type_map.items():
                     # Actualizar GraphQLObjectType (Query, Mutation, Types)
                     if isinstance(graphql_type, GraphQLObjectType) and hasattr(graphql_type, 'fields'):
                         for field_name, field in graphql_type.fields.items():
-                            # Reemplazar scalar en el tipo del campo (manejando NonNull y List)
+                            # Reemplazar scalar en el tipo de retorno del campo
                             field.type = self._replace_scalar_in_type(field.type, scalar_name, new_scalar_type)
                             
-                            # También actualizar argumentos del campo
-                            if hasattr(field, 'args') and field.args:
-                                for arg_name, arg in field.args.items():
-                                    arg.type = self._replace_scalar_in_type(arg.type, scalar_name, new_scalar_type)
+                            # NO actualizar argumentos aquí - los InputObjectTypes se actualizan abajo
+                            # Esto previene la doble ejecución de assess()
                     
-                    # NUEVO: Actualizar GraphQLInputObjectType (inputs como EventInput)
+                    # Actualizar GraphQLInputObjectType (inputs como UserInput, EventInput)
+                    # Esto maneja los campos DENTRO de los input types
                     if isinstance(graphql_type, GraphQLInputObjectType) and hasattr(graphql_type, 'fields'):
                         for field_name, field in graphql_type.fields.items():
                             field.type = self._replace_scalar_in_type(field.type, scalar_name, new_scalar_type)
@@ -337,6 +353,9 @@ class HTTPServer:
     async def gql_handler(schemas, request: Request, session_store=None, cookie_name='session_id'):
         """Maneja peticiones GraphQL"""
         try:
+            # Inicializar cache de scalars para esta request
+            _scalar_cache.set({})
+            
             data = await request.json()
             query = data.get("query")
             variables = data.get("variables", {})
@@ -355,7 +374,6 @@ class HTTPServer:
             
             # Crear contexto con session_id, session y una función para crear nuevas sesiones
             context = {
-                'session_id': session_id,
                 'session': session,  # Objeto Session o None
                 'request': request,
                 'new_session': None  # Se usará para setear nueva sesión en la respuesta
@@ -371,7 +389,35 @@ class HTTPServer:
             
             response_data = {"data": result.data}
             if result.errors:
-                response_data["errors"] = [str(error) for error in result.errors]
+                formatted_errors = []
+                for error in result.errors:
+                    # Verificar si es un error de pgql (Fatal/Warning)
+                    original_error = getattr(error, 'original_error', None)
+                    
+                    if original_error and hasattr(original_error, 'error'):
+                        # Es un error de pgql (Fatal o Warning)
+                        error_struct = original_error.error()
+                        error_dict = error_struct.to_dict()
+                        
+                        # Agregar path y locations desde el GraphQLError si existen
+                        if hasattr(error, 'path') and error.path:
+                            error_dict["path"] = error.path
+                        if hasattr(error, 'locations') and error.locations:
+                            error_dict["locations"] = [{"line": loc.line, "column": loc.column} for loc in error.locations]
+                    else:
+                        # Es un GraphQLError estándar
+                        error_dict = {
+                            "message": error.message,
+                        }
+                        if hasattr(error, 'path') and error.path:
+                            error_dict["path"] = error.path
+                        if hasattr(error, 'locations') and error.locations:
+                            error_dict["locations"] = [{"line": loc.line, "column": loc.column} for loc in error.locations]
+                        if hasattr(error, 'extensions') and error.extensions:
+                            error_dict["extensions"] = error.extensions
+                    
+                    formatted_errors.append(error_dict)
+                response_data["errors"] = formatted_errors
             
             json_response = JSONResponse(response_data)
             

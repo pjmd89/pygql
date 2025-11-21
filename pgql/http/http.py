@@ -1,6 +1,7 @@
 from functools import partial, wraps
 from graphql import GraphQLSchema, build_schema, graphql, GraphQLScalarType
 from graphql.type.definition import GraphQLObjectType, GraphQLNonNull, GraphQLList
+from graphql.language import ast as gql_ast
 import uvicorn
 import re
 from pgql.http.config_http_enum import ConfigHTTPEnum
@@ -29,6 +30,35 @@ def get_base_type_name(field_type):
         elif isinstance(field_type, GraphQLList):
             field_type = field_type.of_type
     return getattr(field_type, 'name', None)
+
+def _extract_value_from_ast(value_node):
+    """Extrae el valor de un nodo AST de GraphQL
+    
+    Soporta: IntValue, FloatValue, StringValue, BooleanValue, NullValue, 
+             EnumValue, ListValue, ObjectValue
+    """
+    if isinstance(value_node, gql_ast.IntValueNode):
+        return int(value_node.value)
+    elif isinstance(value_node, gql_ast.FloatValueNode):
+        return float(value_node.value)
+    elif isinstance(value_node, gql_ast.StringValueNode):
+        return value_node.value
+    elif isinstance(value_node, gql_ast.BooleanValueNode):
+        return value_node.value
+    elif isinstance(value_node, gql_ast.NullValueNode):
+        return None
+    elif isinstance(value_node, gql_ast.EnumValueNode):
+        return value_node.value
+    elif isinstance(value_node, gql_ast.ListValueNode):
+        return [_extract_value_from_ast(item) for item in value_node.values]
+    elif isinstance(value_node, gql_ast.ObjectValueNode):
+        return {
+            field.name.value: _extract_value_from_ast(field.value)
+            for field in value_node.fields
+        }
+    else:
+        # Fallback: intentar obtener .value
+        return getattr(value_node, 'value', None)
 
 def assign_resolvers(
     schema: GraphQLSchema, 
@@ -64,10 +94,12 @@ def assign_resolvers(
                 session_id = info.context.get('session_id')
             
             # ⚡ PASO 1: Procesar directivas ANTES del resolver
-            # Las directivas se obtienen del SCHEMA (no de la query)
+            # Las directivas pueden venir de:
+            # 1. SCHEMA (FIELD_DEFINITION): @directiva en el schema
+            # 2. QUERY (FIELD): @directiva en la query
             directive_results = {}
             
-            # Obtener directivas del schema
+            # 1. Obtener directivas del SCHEMA (FIELD_DEFINITION)
             if info.parent_type and info.field_name:
                 # Acceder al campo en el schema
                 field_def = info.parent_type.fields.get(info.field_name)
@@ -76,9 +108,16 @@ def assign_resolvers(
                         for directive_node in field_def.ast_node.directives:
                             directive_name = directive_node.name.value
                             if directive_name in directives:
-                                # Pasar todos los argumentos del field a la directiva
-                                # La directiva decide cuáles usar
+                                # Obtener argumentos de la directiva del schema
                                 directive_args = kwargs.copy()
+                                
+                                # Extraer argumentos específicos de la directiva
+                                if hasattr(directive_node, 'arguments') and directive_node.arguments:
+                                    for arg in directive_node.arguments:
+                                        arg_name = arg.name.value
+                                        # Extraer valor del AST según el tipo de nodo
+                                        arg_value = _extract_value_from_ast(arg.value)
+                                        directive_args[arg_name] = arg_value
                                 
                                 # Invocar directiva
                                 directive_instance = directives[directive_name]
@@ -92,6 +131,41 @@ def assign_resolvers(
                                     # Si la directiva retorna error, manejarlo
                                     raise Exception(str(error))
                                 
+                                directive_results[directive_name] = result
+            
+            # 2. Obtener directivas de la QUERY (FIELD)
+            # Las directivas en la query sobrescriben las del schema
+            if hasattr(info, 'field_nodes') and info.field_nodes:
+                # field_nodes contiene los nodos de la query
+                for field_node in info.field_nodes:
+                    if hasattr(field_node, 'directives') and field_node.directives:
+                        for directive_node in field_node.directives:
+                            directive_name = directive_node.name.value
+                            if directive_name in directives:
+                                # Extraer argumentos de la directiva en la query
+                                directive_args = kwargs.copy()
+                                
+                                # Si la directiva tiene argumentos en la query, usarlos
+                                if hasattr(directive_node, 'arguments') and directive_node.arguments:
+                                    for arg in directive_node.arguments:
+                                        arg_name = arg.name.value
+                                        # Extraer valor del AST según el tipo de nodo
+                                        arg_value = _extract_value_from_ast(arg.value)
+                                        directive_args[arg_name] = arg_value
+                                
+                                # Invocar directiva
+                                directive_instance = directives[directive_name]
+                                result, error = directive_instance.invoke(
+                                    directive_args,
+                                    dst_type,
+                                    resolver_name
+                                )
+                                
+                                if error:
+                                    # Si la directiva retorna error, manejarlo
+                                    raise Exception(str(error))
+                                
+                                # Las directivas de la query sobrescriben las del schema
                                 directive_results[directive_name] = result
             
             # Crear ResolverInfo compatible con Go

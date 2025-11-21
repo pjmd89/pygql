@@ -15,7 +15,8 @@ from .session import SessionStore, Session
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse, Response
 from starlette.requests import Request
-from starlette.routing import Route
+from starlette.routing import Route, Mount
+from starlette.middleware import Middleware
 
 # Cache para evitar doble ejecución de assess() durante validación y ejecución
 _scalar_cache: contextvars.ContextVar[dict] = contextvars.ContextVar('scalar_cache', default=None)
@@ -25,6 +26,7 @@ class HTTPServer:
         self.__httpConfig = HTTPConfig(configPath)
         self.__app: Starlette = None
         self.__routes: list[Route] = []
+        self.__mounts: list[Mount] = []  # Para montar aplicaciones ASGI adicionales
         self.__schemas: dict[str, GraphQLSchema] = {}
         self.__on_authorize: Optional[Callable[[AuthorizeInfo], bool]] = None
         self.__resolvers: dict[str, type] = {}
@@ -345,8 +347,51 @@ class HTTPServer:
     async def rest_handler(self, request: Request):
         return Response("REST handler not implemented", status_code=501)
 
+    def mount(self, path: str, app, name: str = None):
+        """Monta una aplicación ASGI (como FastAPI) en una ruta específica
+        
+        Args:
+            path: Ruta base donde se montará la aplicación (ej: "/api", "/v1")
+            app: Aplicación ASGI (FastAPI, Starlette, etc.)
+            name: Nombre opcional para el mount
+        
+        Example:
+            from fastapi import FastAPI
+            from pgql import HTTPServer
+            
+            # Tu aplicación FastAPI existente
+            fastapi_app = FastAPI()
+            
+            @fastapi_app.get("/users")
+            def get_users():
+                return {"users": ["Alice", "Bob"]}
+            
+            # Servidor pygql
+            server = HTTPServer('config.yml')
+            server.scalar("Date", DateScalar())
+            server.gql({"Query": Query, "Mutation": Mutation})
+            
+            # Montar FastAPI en /api
+            server.mount("/api", fastapi_app, name="fastapi")
+            
+            # Ahora tienes:
+            # - /graphql -> pygql GraphQL
+            # - /api/users -> FastAPI endpoint
+            
+            server.start()  # Un solo uvicorn corriendo ambas apps
+        
+        Note:
+            Debe llamarse ANTES de start() para que las rutas se registren correctamente.
+            La aplicación montada tendrá acceso a todas las sub-rutas bajo el path especificado.
+        """
+        mount = Mount(path, app=app, name=name)
+        self.__mounts.append(mount)
+        print(f"🔗 Montada aplicación '{name or 'unnamed'}' en {path}")
+
     def start(self):
-        self.__app = Starlette(routes=self.__routes, debug=self.__httpConfig.debug)
+        # Combinar routes y mounts
+        all_routes = self.__routes + self.__mounts
+        self.__app = Starlette(routes=all_routes, debug=self.__httpConfig.debug)
         uvicorn.run(self.__app, host=self.__httpConfig.server.host, port=self.__httpConfig.http_port)
 
     @staticmethod

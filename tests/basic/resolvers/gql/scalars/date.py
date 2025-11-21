@@ -18,7 +18,9 @@ class DateScalar(Scalar):
         
         # Convertir datetime a string ISO format
         if isinstance(value, datetime):
-            return value.strftime("%Y-%m-%d"), None
+            today = datetime.now()
+            age_years = today.year - value.year - ((today.month, today.day) < (value.month, value.day))
+            return age_years, None
         
         # Si ya es string, retornarlo
         return str(value), None

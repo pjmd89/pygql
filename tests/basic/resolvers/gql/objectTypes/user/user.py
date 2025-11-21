@@ -61,7 +61,7 @@ class User:
                     'birthDate': birth_date.strftime('%Y-%m-%d')
                 }
                 
-                raise new_error(err=error_descriptor)
+                raise new_error(err=error_descriptor, extensions=extensions)
                 
                 # Opción 2: Solo con mensaje (más simple, sin código)
                 # raise new_fatal(

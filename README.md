@@ -330,6 +330,72 @@ For complete session documentation, see [SESSIONS.md](SESSIONS.md).
 
 **Note:** The `on_authorize` function is optional. If not set, all resolvers execute without authorization checks.
 
+### Error Handling
+
+pgql provides a structured error system compatible with GraphQL spec and Go's `gogql`:
+
+```python
+from pgql import new_error, new_fatal, new_warning, ErrorDescriptor, LEVEL_FATAL
+
+class User:
+    def create_user(self, parent, info):
+        input_data = info.input
+        
+        # Simple fatal error
+        if not input_data.get('email'):
+            raise new_fatal(
+                message="Email is required",
+                extensions={'field': 'email'}
+            )
+        
+        # Error with ErrorDescriptor
+        if input_data.get('age', 0) < 18:
+            error_descriptor = ErrorDescriptor(
+                message="User must be at least 18 years old",
+                code="AGE_VALIDATION_FAILED",
+                level=LEVEL_FATAL
+            )
+            raise new_error(
+                err=error_descriptor,
+                extensions={'field': 'age', 'minimumAge': 18}
+            )
+        
+        # Warning (non-critical)
+        if input_data.get('age', 0) > 100:
+            raise new_warning(
+                message="Unusual age detected",
+                extensions={'field': 'age', 'value': input_data['age']}
+            )
+        
+        return {'id': '1', 'name': input_data['name']}
+```
+
+**Error Response Format:**
+
+```json
+{
+  "data": null,
+  "errors": [
+    {
+      "message": "User must be at least 18 years old",
+      "extensions": {
+        "code": "AGE_VALIDATION_FAILED",
+        "level": "fatal",
+        "field": "age",
+        "minimumAge": 18
+      }
+    }
+  ]
+}
+```
+
+**Error Types:**
+- `new_fatal()`: Critical error, stops execution (returns null for field)
+- `new_warning()`: Non-critical warning, execution continues
+- `new_error()`: Generic error (Warning or Fatal based on level)
+
+For complete error handling guide, see [ERROR_HANDLING.md](ERROR_HANDLING.md).
+
 ### Nested Schema Organization
 
 Organize your schemas by domain:
@@ -363,6 +429,17 @@ server:
       endpoint: /admin/graphql
       schema: admin_schema
 ```
+
+## Documentation
+
+For detailed guides on specific features:
+
+- **[Error Handling](ERROR_HANDLING.md)** - Complete guide on how to return and handle errors
+- **[Sessions](SESSIONS.md)** - Session management and cookie handling
+- **[Authorization](AUTHORIZATION.md)** - Authorization system with `on_authorize`
+- **[Scalars](SCALARS.md)** - Custom scalar types implementation
+- **[Naming Conventions](NAMING_CONVENTIONS.md)** - camelCase/snake_case conversion
+- **[Resolver Info](RESOLVER_INFO.md)** - ResolverInfo object reference
 
 ## Requirements
 

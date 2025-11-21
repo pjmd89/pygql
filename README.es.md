@@ -358,6 +358,72 @@ Para documentación completa de sesiones, ver [SESSIONS.md](SESSIONS.md).
 
 **Nota:** La función `on_authorize` es opcional. Si no se configura, todos los resolvers se ejecutan sin verificaciones de autorización.
 
+### Manejo de Errores
+
+pgql proporciona un sistema estructurado de errores compatible con la especificación GraphQL y con `gogql` de Go:
+
+```python
+from pgql import new_error, new_fatal, new_warning, ErrorDescriptor, LEVEL_FATAL
+
+class User:
+    def create_user(self, parent, info):
+        input_data = info.input
+        
+        # Error fatal simple
+        if not input_data.get('email'):
+            raise new_fatal(
+                message="El email es requerido",
+                extensions={'field': 'email'}
+            )
+        
+        # Error con ErrorDescriptor
+        if input_data.get('age', 0) < 18:
+            error_descriptor = ErrorDescriptor(
+                message="El usuario debe tener al menos 18 años",
+                code="AGE_VALIDATION_FAILED",
+                level=LEVEL_FATAL
+            )
+            raise new_error(
+                err=error_descriptor,
+                extensions={'field': 'age', 'minimumAge': 18}
+            )
+        
+        # Warning (no crítico)
+        if input_data.get('age', 0) > 100:
+            raise new_warning(
+                message="Edad inusual detectada",
+                extensions={'field': 'age', 'value': input_data['age']}
+            )
+        
+        return {'id': '1', 'name': input_data['name']}
+```
+
+**Formato de Respuesta de Error:**
+
+```json
+{
+  "data": null,
+  "errors": [
+    {
+      "message": "El usuario debe tener al menos 18 años",
+      "extensions": {
+        "code": "AGE_VALIDATION_FAILED",
+        "level": "fatal",
+        "field": "age",
+        "minimumAge": 18
+      }
+    }
+  ]
+}
+```
+
+**Tipos de Errores:**
+- `new_fatal()`: Error crítico, detiene la ejecución (retorna null para el campo)
+- `new_warning()`: Advertencia no crítica, la ejecución continúa
+- `new_error()`: Error genérico (Warning o Fatal según el nivel)
+
+Para la guía completa de manejo de errores, ver [ERROR_HANDLING.md](ERROR_HANDLING.md).
+
 ### Organización Anidada de Esquemas
 
 Organiza tus esquemas por dominio:
@@ -394,11 +460,12 @@ server:
 
 ## 📚 Documentación Adicional
 
-- **[RESOLVER_INFO.md](RESOLVER_INFO.md)** - Estructura `ResolverInfo` para resolvers (compatible con Go)
-- **[NAMING_CONVENTIONS.md](NAMING_CONVENTIONS.md)** - Convenciones de nombres camelCase ↔ snake_case
-- **[SCALARS.md](SCALARS.md)** - Custom Scalars (Date, URL, JSON, etc.)
+- **[ERROR_HANDLING.md](ERROR_HANDLING.md)** - Guía completa sobre manejo y retorno de errores
 - **[SESSIONS.md](SESSIONS.md)** - Manejo de sesiones y cookies
 - **[AUTHORIZATION.md](AUTHORIZATION.md)** - Interceptor de autorización
+- **[SCALARS.md](SCALARS.md)** - Custom Scalars (Date, URL, JSON, etc.)
+- **[NAMING_CONVENTIONS.md](NAMING_CONVENTIONS.md)** - Convenciones de nombres camelCase ↔ snake_case
+- **[RESOLVER_INFO.md](RESOLVER_INFO.md)** - Estructura `ResolverInfo` para resolvers (compatible con Go)
 
 ## Requisitos
 

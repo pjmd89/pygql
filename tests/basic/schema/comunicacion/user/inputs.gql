@@ -1,0 +1,5 @@
+input UserInput {
+    name: String!
+    age: Date!
+    email: String!
+}

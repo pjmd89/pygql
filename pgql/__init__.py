@@ -7,9 +7,9 @@ __version__ = "0.5.3"
 from .http.http import HTTPServer
 from .http.authorize_info import AuthorizeInfo
 from .http.session import Session
-from .resolvers.base import Scalar, ScalarResolved, ResolverInfo
-from .directives import Directive, DirectiveList
-from .errors import (
+from .graphql.resolvers.base import Scalar, ScalarResolved, ResolverInfo
+from .graphql.directives import Directive, DirectiveList
+from .graphql.errors import (
     GQLError,
     ErrorStruct,
     GQLErrorLocation,

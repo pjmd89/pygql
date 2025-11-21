@@ -11,7 +11,7 @@ from typing import Any, Optional, Dict, Tuple, TYPE_CHECKING
 from abc import ABC, abstractmethod
 
 if TYPE_CHECKING:
-    from pgql.errors import GQLError
+    from pgql.graphql.errors import GQLError
 
 
 # Type alias to match Go's DirectiveList
@@ -27,7 +27,7 @@ class Directive(ABC):
     
     Example:
         ```python
-        from pgql.directives import Directive
+        from pgql.graphql.directives import Directive
         from pgql import new_warning
         
         class PaginateDirective(Directive):

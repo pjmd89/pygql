@@ -15,6 +15,7 @@ class User:
         return {
             'id': user_id or 1, 
             'name': 'John Doe', 
+            'age': 30,
             'email': 'john@example.com'
         }
     
@@ -24,6 +25,21 @@ class User:
         print(f"   Args recibidos: {info.args}")
         
         return [
-            {'id': 1, 'name': 'Jose', 'email': 'john@example.com'},
-            {'id': 2, 'name': 'Mario', 'email': 'jane@example.com'}
+            {'id': 1, 'name': 'Jose','age': 30, 'email': 'john@example.com'},
+            {'id': 2, 'name': 'Mario', 'age': 25, 'email': 'jane@example.com'}
         ]
+    def create_user(self, info: ResolverInfo):
+        """Crear un nuevo usuario"""
+        user_input = info.args.get('input')
+        
+        print(f"➕ create_user llamado con input={user_input}")
+        
+        # Aquí normalmente guardarías el usuario en la base de datos
+        new_user = {
+            'id': 3,  # Simulando un nuevo ID
+            'name': user_input['name'],
+            'age': user_input['age'],
+            'email': user_input['email']
+        }
+        
+        return new_user

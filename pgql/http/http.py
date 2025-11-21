@@ -1,12 +1,13 @@
-from functools import partial, wraps
 from graphql import GraphQLSchema, build_schema, graphql, GraphQLScalarType
-from graphql.type.definition import GraphQLObjectType, GraphQLNonNull, GraphQLList
-from graphql.language import ast as gql_ast
+from graphql.type.definition import GraphQLObjectType, GraphQLNonNull, GraphQLList, GraphQLInputObjectType
 import uvicorn
-import re
+import glob
+from typing import Callable, Optional
+
 from pgql.http.config_http_enum import ConfigHTTPEnum
-from pgql.resolvers.base import Scalar, ScalarResolved, ResolverInfo
-from pgql.directives import Directive
+from pgql.graphql.resolvers.base import Scalar, ScalarResolved
+from pgql.graphql.directives import Directive
+from pgql.graphql import GraphQLExecutor
 from .config import HTTPConfig, RouteConfig
 from .authorize_info import AuthorizeInfo
 from .session import SessionStore, Session
@@ -14,268 +15,6 @@ from starlette.applications import Starlette
 from starlette.responses import JSONResponse, Response
 from starlette.requests import Request
 from starlette.routing import Route
-from typing import Callable, Optional
-import glob
-
-def camel_to_snake(name: str) -> str:
-    """Convierte camelCase a snake_case"""
-    # Insertar _ antes de cada letra mayúscula y convertir a minúsculas
-    s1 = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', name)
-    return re.sub('([a-z0-9])([A-Z])', r'\1_\2', s1).lower()
-
-def get_base_type_name(field_type):
-    while isinstance(field_type, (GraphQLNonNull, GraphQLList)):
-        if isinstance(field_type, GraphQLNonNull):
-            field_type = field_type.of_type
-        elif isinstance(field_type, GraphQLList):
-            field_type = field_type.of_type
-    return getattr(field_type, 'name', None)
-
-def _extract_value_from_ast(value_node):
-    """Extrae el valor de un nodo AST de GraphQL
-    
-    Soporta: IntValue, FloatValue, StringValue, BooleanValue, NullValue, 
-             EnumValue, ListValue, ObjectValue
-    """
-    if isinstance(value_node, gql_ast.IntValueNode):
-        return int(value_node.value)
-    elif isinstance(value_node, gql_ast.FloatValueNode):
-        return float(value_node.value)
-    elif isinstance(value_node, gql_ast.StringValueNode):
-        return value_node.value
-    elif isinstance(value_node, gql_ast.BooleanValueNode):
-        return value_node.value
-    elif isinstance(value_node, gql_ast.NullValueNode):
-        return None
-    elif isinstance(value_node, gql_ast.EnumValueNode):
-        return value_node.value
-    elif isinstance(value_node, gql_ast.ListValueNode):
-        return [_extract_value_from_ast(item) for item in value_node.values]
-    elif isinstance(value_node, gql_ast.ObjectValueNode):
-        return {
-            field.name.value: _extract_value_from_ast(field.value)
-            for field in value_node.fields
-        }
-    else:
-        # Fallback: intentar obtener .value
-        return getattr(value_node, 'value', None)
-
-def assign_resolvers(
-    schema: GraphQLSchema, 
-    classes: dict[str, type],
-    on_authorize_fn: Optional[Callable[[AuthorizeInfo], bool]] = None,
-    request: Optional[Request] = None,
-    directives: Optional[dict[str, Directive]] = None
-) -> GraphQLSchema:
-    """Asigna resolvers a los campos del schema con interceptor de autorización y directivas
-    
-    Args:
-        schema: El schema GraphQL
-        classes: Diccionario de resolvers mapeados por nombre de tipo
-        on_authorize_fn: Función opcional para autorizar ejecución de resolvers
-        request: Request de Starlette para obtener session_id de cookies
-        directives: Diccionario de directivas registradas
-    """
-    
-    directives = directives or {}
-    
-    def create_authorized_resolver(original_resolver, src_type: str, dst_type: str, resolver_name: str, operation: str):
-        """Crea un wrapper que intercepta la ejecución del resolver con autorización y directivas"""
-        @wraps(original_resolver)
-        def authorized_resolver(parent, info, **kwargs):
-            # Convertir argumentos de camelCase a snake_case
-            snake_kwargs = {camel_to_snake(key): value for key, value in kwargs.items()}
-            # print(f"🔧 [WRAPPER] kwargs recibidos: {kwargs}")
-            # print(f"🔧 [WRAPPER] snake_kwargs: {snake_kwargs}")
-            
-            # Obtener session_id del contexto
-            session_id = None
-            if info.context and isinstance(info.context, dict):
-                session_id = info.context.get('session_id')
-            
-            # ⚡ PASO 1: Procesar directivas ANTES del resolver
-            # Las directivas pueden venir de:
-            # 1. SCHEMA (FIELD_DEFINITION): @directiva en el schema
-            # 2. QUERY (FIELD): @directiva en la query
-            directive_results = {}
-            
-            # 1. Obtener directivas del SCHEMA (FIELD_DEFINITION)
-            if info.parent_type and info.field_name:
-                # Acceder al campo en el schema
-                field_def = info.parent_type.fields.get(info.field_name)
-                if field_def and hasattr(field_def, 'ast_node') and field_def.ast_node:
-                    if hasattr(field_def.ast_node, 'directives') and field_def.ast_node.directives:
-                        for directive_node in field_def.ast_node.directives:
-                            directive_name = directive_node.name.value
-                            if directive_name in directives:
-                                # Obtener argumentos de la directiva del schema
-                                directive_args = kwargs.copy()
-                                
-                                # Extraer argumentos específicos de la directiva
-                                if hasattr(directive_node, 'arguments') and directive_node.arguments:
-                                    for arg in directive_node.arguments:
-                                        arg_name = arg.name.value
-                                        # Extraer valor del AST según el tipo de nodo
-                                        arg_value = _extract_value_from_ast(arg.value)
-                                        directive_args[arg_name] = arg_value
-                                
-                                # Invocar directiva
-                                directive_instance = directives[directive_name]
-                                result, error = directive_instance.invoke(
-                                    directive_args,
-                                    dst_type,
-                                    resolver_name
-                                )
-                                
-                                if error:
-                                    # Si la directiva retorna error, manejarlo
-                                    raise Exception(str(error))
-                                
-                                directive_results[directive_name] = result
-            
-            # 2. Obtener directivas de la QUERY (FIELD)
-            # Las directivas en la query sobrescriben las del schema
-            if hasattr(info, 'field_nodes') and info.field_nodes:
-                # field_nodes contiene los nodos de la query
-                for field_node in info.field_nodes:
-                    if hasattr(field_node, 'directives') and field_node.directives:
-                        for directive_node in field_node.directives:
-                            directive_name = directive_node.name.value
-                            if directive_name in directives:
-                                # Extraer argumentos de la directiva en la query
-                                directive_args = kwargs.copy()
-                                
-                                # Si la directiva tiene argumentos en la query, usarlos
-                                if hasattr(directive_node, 'arguments') and directive_node.arguments:
-                                    for arg in directive_node.arguments:
-                                        arg_name = arg.name.value
-                                        # Extraer valor del AST según el tipo de nodo
-                                        arg_value = _extract_value_from_ast(arg.value)
-                                        directive_args[arg_name] = arg_value
-                                
-                                # Invocar directiva
-                                directive_instance = directives[directive_name]
-                                result, error = directive_instance.invoke(
-                                    directive_args,
-                                    dst_type,
-                                    resolver_name
-                                )
-                                
-                                if error:
-                                    # Si la directiva retorna error, manejarlo
-                                    raise Exception(str(error))
-                                
-                                # Las directivas de la query sobrescriben las del schema
-                                directive_results[directive_name] = result
-            
-            # Crear ResolverInfo compatible con Go
-            resolver_info = ResolverInfo(
-                operation=operation,
-                resolver=resolver_name,
-                args=snake_kwargs,
-                parent=parent,
-                type_name=dst_type,
-                directives=directive_results,  # ⬅️ Directivas procesadas
-                parent_type_name=src_type,
-                session_id=session_id,
-                context=info.context if info.context else {},
-                field_name=resolver_name
-            )
-            # print(f"🔧 [WRAPPER] resolver_info.args: {resolver_info.args}")
-            
-            # ⚡ PASO 2: Autorización (si está configurada)
-            if on_authorize_fn:
-                # Crear objeto de autorización
-                auth_info = AuthorizeInfo(
-                    operation=operation,
-                    src_type=src_type,
-                    dst_type=dst_type,
-                    resolver=resolver_name,
-                    session_id=session_id
-                )
-                
-                # Ejecutar función de autorización
-                authorized = on_authorize_fn(auth_info)
-                
-                if not authorized:
-                    raise PermissionError(f"No autorizado para ejecutar {dst_type}.{resolver_name}")
-            
-            # Ejecutar resolver solo con resolver_info (estilo Go)
-            # parent está disponible en resolver_info.parent
-            return original_resolver(resolver_info)
-        
-        return authorized_resolver
-    
-    def assign_type_resolvers(graphql_type: GraphQLObjectType, operation: str):
-        if not hasattr(graphql_type, 'fields'):
-            return
-        
-        # Buscar resolver por el tipo padre primero (para root queries/mutations)
-        parent_resolver = classes.get(graphql_type.name)
-        
-        for field_name, field in graphql_type.fields.items():
-            return_type_name = get_base_type_name(field.type)
-            
-            # Convertir el nombre del field de camelCase a snake_case para buscar el método
-            method_name = camel_to_snake(field_name)
-            
-            # Opción 1: Resolver en el objeto del tipo padre (ej: Query.get_users)
-            if parent_resolver and hasattr(parent_resolver, method_name):
-                method = getattr(parent_resolver, method_name)
-                
-                authorized_method = create_authorized_resolver(
-                    method,
-                    graphql_type.name,  # src_type: tipo padre
-                    return_type_name,   # dst_type: tipo de retorno
-                    field_name,         # resolver: nombre del field
-                    operation
-                )
-                
-                field.resolve = authorized_method
-                
-                resolver_name = parent_resolver.__class__.__name__ if not isinstance(parent_resolver, type) else parent_resolver.__name__
-                auth_status = "🔒" if on_authorize_fn else "✅"
-                print(f"{auth_status} Asignado {resolver_name}.{method_name} a {graphql_type.name}.{field_name}")
-            
-            # Opción 2: Resolver en el objeto del tipo de retorno (ej: Company para User.company)
-            elif return_type_name and return_type_name in classes:
-                resolver_obj = classes[return_type_name]
-                if hasattr(resolver_obj, method_name):
-                    method = getattr(resolver_obj, method_name)
-                    
-                    authorized_method = create_authorized_resolver(
-                        method,
-                        graphql_type.name,  # src_type: tipo padre
-                        return_type_name,   # dst_type: tipo de retorno
-                        field_name,         # resolver: nombre del field
-                        operation
-                    )
-                    
-                    field.resolve = authorized_method
-                    
-                    resolver_name = resolver_obj.__class__.__name__ if not isinstance(resolver_obj, type) else resolver_obj.__name__
-                    auth_status = "🔒" if on_authorize_fn else "✅"
-                    print(f"{auth_status} Asignado {resolver_name}.{method_name} a {graphql_type.name}.{field_name}")
-    
-    # Determinar el tipo de operación basado en el tipo de schema
-    if schema.query_type:
-        assign_type_resolvers(schema.query_type, 'query')
-    
-    if schema.mutation_type:
-        assign_type_resolvers(schema.mutation_type, 'mutation')
-    
-    if schema.subscription_type:
-        assign_type_resolvers(schema.subscription_type, 'subscription')
-    
-    # Asignar resolvers para tipos anidados (no son operaciones root)
-    for type_name, graphql_type in schema.type_map.items():
-        if isinstance(graphql_type, GraphQLObjectType):
-            # Skip tipos de operación root ya procesados
-            if graphql_type in [schema.query_type, schema.mutation_type, schema.subscription_type]:
-                continue
-            assign_type_resolvers(graphql_type, 'query')  # Los nested fields se consideran 'query'
-    
-    return schema
 
 class HTTPServer:
     def __init__(self, configPath: str):
@@ -288,6 +27,7 @@ class HTTPServer:
         self.__session_store = SessionStore()  # Almacén de sesiones
         self.__scalars: dict[str, Scalar] = {}  # Registro de custom scalars
         self.__directives: dict[str, 'Directive'] = {}  # Registro de custom directives
+        self.__executor: Optional[GraphQLExecutor] = None  # Ejecutor de GraphQL
 
         for route in self.__httpConfig.server.routes:
             match route.mode:
@@ -298,8 +38,6 @@ class HTTPServer:
                         return await self.__class__.gql_handler(
                             self.__schemas, 
                             request, 
-                            self.__on_authorize,
-                            self.__resolvers,
                             self.__session_store,
                             self.__httpConfig.cookie_name
                         )
@@ -325,9 +63,11 @@ class HTTPServer:
         # Registrar custom scalars en el schema
         for scalar_name, scalar_instance in self.__scalars.items():
             if scalar_name in schema.type_map:
+                print(f"🔧 Registrando scalar '{scalar_name}' en schema.type_map")
                 # Crear wrapper para integrar con graphql-core
                 def make_serialize(scalar_obj):
                     def serialize(value):
+                        print(f"📤 [serialize] {scalar_obj.__class__.__name__}.set() llamado con: {value}")
                         result, error = scalar_obj.set(value)
                         if error:
                             raise error
@@ -336,6 +76,7 @@ class HTTPServer:
                 
                 def make_parse_value(scalar_obj):
                     def parse_value(value):
+                        print(f"📥 [parse_value] {scalar_obj.__class__.__name__}.assess() llamado con: {value}")
                         resolved = ScalarResolved(
                             value=value,
                             resolver_name='',
@@ -351,6 +92,7 @@ class HTTPServer:
                     def parse_literal(ast, variable_values=None):
                         # Extraer valor del AST node
                         value = getattr(ast, 'value', None)
+                        print(f"📥 [parse_literal] {scalar_obj.__class__.__name__}.assess() llamado con AST value: {value}")
                         resolved = ScalarResolved(
                             value=value,
                             resolver_name='',
@@ -379,6 +121,7 @@ class HTTPServer:
                 
                 # CRÍTICO: Actualizar todas las referencias a este scalar en los campos
                 for type_name, graphql_type in schema.type_map.items():
+                    # Actualizar GraphQLObjectType (Query, Mutation, Types)
                     if isinstance(graphql_type, GraphQLObjectType) and hasattr(graphql_type, 'fields'):
                         for field_name, field in graphql_type.fields.items():
                             # Reemplazar scalar en el tipo del campo (manejando NonNull y List)
@@ -388,6 +131,11 @@ class HTTPServer:
                             if hasattr(field, 'args') and field.args:
                                 for arg_name, arg in field.args.items():
                                     arg.type = self._replace_scalar_in_type(arg.type, scalar_name, new_scalar_type)
+                    
+                    # NUEVO: Actualizar GraphQLInputObjectType (inputs como EventInput)
+                    if isinstance(graphql_type, GraphQLInputObjectType) and hasattr(graphql_type, 'fields'):
+                        for field_name, field in graphql_type.fields.items():
+                            field.type = self._replace_scalar_in_type(field.type, scalar_name, new_scalar_type)
         
         return schema
     
@@ -405,16 +153,18 @@ class HTTPServer:
     def gql(self, resolvers: dict[str, type]):
         """Registra resolvers para los schemas GraphQL"""
         self.__resolvers = resolvers
+        
+        # Crear ejecutor GraphQL con autorización y directivas
+        self.__executor = GraphQLExecutor(
+            on_authorize_fn=self.__on_authorize,
+            directives=self.__directives
+        )
+        
         # Re-cargar schemas para aplicar scalars y directives registrados
         for route in self.__httpConfig.server.routes:
             if route.mode == ConfigHTTPEnum.MODE_GQL:
                 schema = self.__load_schema(route.schema)
-                schema = assign_resolvers(
-                    schema, 
-                    resolvers, 
-                    self.__on_authorize,
-                    directives=self.__directives  # ⬅️ Pasar directivas
-                )
+                schema = self.__executor.assign_resolvers(schema, resolvers)
                 self.__schemas[route.endpoint] = schema
     
     def on_authorize(self, authorize_fn: Callable[[AuthorizeInfo], bool]):
@@ -431,16 +181,20 @@ class HTTPServer:
             server.on_authorize(my_authorize)
         """
         self.__on_authorize = authorize_fn
-        # Re-asignar resolvers con la nueva función de autorización
+        
+        # Re-crear ejecutor con nueva función de autorización
         if self.__resolvers:
-            for endpoint, schema in self.__schemas.items():
-                schema = assign_resolvers(
-                    schema, 
-                    self.__resolvers, 
-                    self.__on_authorize,
-                    directives=self.__directives  # ⬅️ Pasar directivas
-                )
-                self.__schemas[endpoint] = schema
+            self.__executor = GraphQLExecutor(
+                on_authorize_fn=self.__on_authorize,
+                directives=self.__directives
+            )
+            
+            # Re-asignar resolvers
+            for route in self.__httpConfig.server.routes:
+                if route.mode == ConfigHTTPEnum.MODE_GQL:
+                    schema = self.__load_schema(route.schema)
+                    schema = self.__executor.assign_resolvers(schema, self.__resolvers)
+                    self.__schemas[route.endpoint] = schema
     
     def scalar(self, name: str, scalar_instance: Scalar):
         """Registra un scalar personalizado
@@ -476,6 +230,7 @@ class HTTPServer:
             Debe llamarse ANTES de gql() para que los scalars estén registrados
             al momento de cargar el schema.
         """
+        print(f"✅ Scalar '{name}' registrado (tipo: {scalar_instance.__class__.__name__})")
         self.__scalars[name] = scalar_instance
     
     def directive(self, name: str, directive_instance: Directive):
@@ -579,7 +334,7 @@ class HTTPServer:
         uvicorn.run(self.__app, host=self.__httpConfig.server.host, port=self.__httpConfig.http_port)
 
     @staticmethod
-    async def gql_handler(schemas, request: Request, on_authorize_fn=None, resolvers=None, session_store=None, cookie_name='session_id'):
+    async def gql_handler(schemas, request: Request, session_store=None, cookie_name='session_id'):
         """Maneja peticiones GraphQL"""
         try:
             data = await request.json()
@@ -605,11 +360,6 @@ class HTTPServer:
                 'request': request,
                 'new_session': None  # Se usará para setear nueva sesión en la respuesta
             }
-            
-            # Re-asignar resolvers con el request actual para cada petición
-            # Esto permite que el wrapper de autorización tenga acceso al session_id
-            if resolvers and on_authorize_fn:
-                schema = assign_resolvers(schema, resolvers, on_authorize_fn, request)
             
             result = await graphql(
                 schema,

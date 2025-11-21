@@ -1,6 +1,11 @@
 schema {
     query: Query
+    mutation: Mutation
 }
 type Query{
     systemInfo: String
 }
+type Mutation{
+    ping(message: String!): String!
+}
+scalar Date

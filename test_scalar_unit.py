@@ -5,8 +5,8 @@ SIN necesidad de iniciar un servidor HTTP
 import sys
 sys.path.insert(0, '/home/munozp/Proyectos/python/pygql')
 
-from pgql.resolvers.base import Scalar, ScalarResolved
-from pgql.errors import new_fatal
+from pgql.graphql.resolvers.base import Scalar, ScalarResolved
+from pgql.graphql.errors import new_fatal
 from datetime import datetime
 
 # DateScalar

@@ -6,7 +6,7 @@ import sys
 sys.path.insert(0, '/home/munozp/Proyectos/python/pygql')
 
 # Importar directamente desde el módulo base sin cargar HTTPServer
-from pgql.resolvers.base import Scalar, ScalarResolved
+from pgql.graphql.resolvers.base import Scalar, ScalarResolved
 from pgql import new_warning, new_fatal
 from datetime import datetime
 from urllib.parse import urlparse

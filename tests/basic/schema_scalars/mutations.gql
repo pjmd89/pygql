@@ -1,0 +1,9 @@
+input EventInput {
+    name: String!
+    date: Date!
+    website: URL
+}
+
+type Mutation {
+    createEvent(input: EventInput!): Event
+}

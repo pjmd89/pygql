@@ -14,7 +14,7 @@ from pgql import (
     LEVEL_FATAL,
     get_errors
 )
-from pgql.errors import Warning, Fatal
+from pgql.graphql.errors import Warning, Fatal
 
 
 def test_warning_creation():

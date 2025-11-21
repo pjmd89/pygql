@@ -146,6 +146,35 @@ class QueryResolvers:
         return all_events
 
 
+class MutationResolvers:
+    def __init__(self):
+        print("  ✅ MutationResolvers instance created")
+    
+    def create_event(self, info: ResolverInfo):
+        """
+        Crea un nuevo evento.
+        El campo 'date' del input ya viene como datetime gracias a DateScalar.assess()
+        """
+        input_data = info.args.get('input', {})
+        
+        print(f"\n⚡ [MUTATION] create_event() llamado")
+        print(f"   [MUTATION] input = {input_data}")
+        print(f"   [MUTATION] date = {input_data.get('date')}")
+        print(f"   [MUTATION] Type of 'date': {type(input_data.get('date'))}")
+        
+        # Crear evento nuevo
+        new_event = {
+            "id": "999",
+            "name": input_data.get('name'),
+            "date": input_data.get('date'),  # Ya es datetime!
+            "website": input_data.get('website', 'https://example.com'),
+            "metadata": {"created": True}
+        }
+        
+        print(f"   ✅ Event created with id=999")
+        return new_event
+
+
 # 5. Configuración del servidor
 if __name__ == "__main__":
     print("🚀 Starting server with custom scalars...")
@@ -164,7 +193,8 @@ if __name__ == "__main__":
     # Registrar resolvers
     print("\n📦 Registering resolvers...")
     server.gql({
-        "Query": QueryResolvers()
+        "Query": QueryResolvers(),
+        "Mutation": MutationResolvers()
     })
     
     print("\n✨ Server ready! Try these queries:\n")

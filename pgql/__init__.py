@@ -2,7 +2,7 @@
 pgql - A Python GraphQL package
 """
 
-__version__ = "0.5.6"
+__version__ = "0.5.7"
 
 from .http.http import HTTPServer
 from .http.authorize_info import AuthorizeInfo

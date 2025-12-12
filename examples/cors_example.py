@@ -2,49 +2,55 @@
 Ejemplo de validación CORS dinámica con on_http_check_origin
 
 Este ejemplo muestra cómo implementar validación de orígenes CORS
-usando el callback on_http_check_origin, similar al patrón on_authorize.
+usando el callback on_http_check_origin, que recibe los orígenes
+permitidos desde el archivo de configuración YAML.
 
 Características:
 - Validación dinámica de orígenes
-- Lista blanca de dominios permitidos
-- Comportamiento permisivo por defecto
+- Combina allowed_origins del YAML con lógica personalizada
+- Permite subdominios y patrones adicionales
 - Logging de validaciones
 """
 
 from pgql import HTTPServer
 
-# Lista de orígenes permitidos (whitelist)
-ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://localhost:5173",  # Vite
-    "https://myapp.com",
-    "https://app.example.com"
-]
-
-def check_origin(origin: str) -> bool:
+def check_origin(origin: str, allowed_origins: list[str]) -> bool:
     """
     Valida si un origen está permitido para acceder al API GraphQL
     
     Args:
         origin: El header Origin de la petición HTTP (ej: "http://localhost:3000")
+        allowed_origins: Lista de orígenes permitidos desde el archivo YAML (cors.allowed_origins)
     
     Returns:
         True si el origen está permitido, False para bloquearlo (retorna 403)
     
     Nota:
-        Por defecto, si no registras esta función, todos los orígenes 
-        están permitidos (comportamiento permisivo).
+        - allowed_origins proviene del archivo YAML
+        - Puedes combinar la validación de YAML con lógica adicional
+        - Si no registras esta función, solo se usa allowed_origins del YAML
     """
     print(f"🔍 Validando origin: {origin}")
+    print(f"📋 Orígenes permitidos en YAML: {allowed_origins}")
     
-    is_allowed = origin in ALLOWED_ORIGINS
+    # 1. Validar contra la lista del YAML
+    if origin in allowed_origins:
+        print(f"✅ Origin permitido (en YAML): {origin}")
+        return True
     
-    if is_allowed:
-        print(f"✅ Origin permitido: {origin}")
-    else:
-        print(f"❌ Origin rechazado: {origin}")
+    # 2. Lógica adicional: permitir subdominios
+    if origin.endswith('.midominio.com'):
+        print(f"✅ Origin permitido (subdominio): {origin}")
+        return True
     
-    return is_allowed
+    # 3. Lógica adicional: permitir localhost con cualquier puerto (HTTP/HTTPS)
+    if (origin.startswith('http://localhost:') or origin.startswith('http://127.0.0.1:') or
+        origin.startswith('https://localhost:') or origin.startswith('https://127.0.0.1:')):
+        print(f"✅ Origin permitido (localhost): {origin}")
+        return True
+    
+    print(f"❌ Origin rechazado: {origin}")
+    return False
 
 
 # Resolvers de ejemplo
@@ -81,9 +87,9 @@ if __name__ == '__main__':
     print("=" * 60)
     print("\nEndpoint GraphQL:")
     print("  POST http://localhost:8080/graphql")
-    print("\nOrígenes permitidos:")
-    for origin in ALLOWED_ORIGINS:
-        print(f"  ✅ {origin}")
+    print("\n📋 Configuración CORS:")
+    print("  - Orígenes del YAML: definidos en config_cors_example.yml")
+    print("  - Validación adicional: subdominios y localhost")
     print("\n🧪 Pruebas:")
     print("\n# Origen permitido (retorna 200 con headers CORS):")
     print('curl -X POST http://localhost:8080/graphql \\')
@@ -98,7 +104,7 @@ if __name__ == '__main__':
     print("\n# Ver headers CORS en respuesta:")
     print('curl -I -X POST http://localhost:8080/graphql \\')
     print('  -H "Content-Type: application/json" \\')
-    print('  -H "Origin: https://myapp.com"')
+    print('  -H "Origin: http://localhost:5173"')
     print("\n# Petición preflight (OPTIONS):")
     print('curl -X OPTIONS http://localhost:8080/graphql \\')
     print('  -H "Origin: http://localhost:3000" \\')

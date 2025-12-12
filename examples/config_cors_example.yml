@@ -3,13 +3,13 @@ https_port: 8443
 cookie_name: session_id
 debug: true
 
-# Configuración de CORS (opcional)
+# Configuración de CORS
 cors:
-  enabled: true
-  allow_credentials: "true"
-  allow_methods: "POST, GET, OPTIONS"
-  allow_headers: "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-Requested-With"
-  max_age: "86400"
+  enabled: true                    # true para habilitar CORS, false para deshabilitar
+  allow_credentials: "true"        # "true" o "false" (como string)
+  allow_methods: "*"               # "*" o "GET, POST, PUT, DELETE"
+  allow_headers: "*"               # "*" o "Content-Type, Authorization"
+  max_age: "86400"                 # Tiempo en segundos que el navegador cachea la respuesta preflight
   # Lista de orígenes permitidos (opcional)
   # Si está vacía o no se define, permite todos los orígenes
   # Si se define, solo permite los orígenes en la lista
@@ -22,13 +22,6 @@ cors:
 server:
   host: localhost
   routes:
-    - mode: file
-      endpoint: /files
-      path: files
     - mode: gql
       endpoint: /graphql
       schema: schema
-    - mode: websocket
-      endpoint: /ws
-    - mode: rest
-      endpoint: /api

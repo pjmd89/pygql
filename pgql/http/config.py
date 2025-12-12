@@ -13,6 +13,15 @@ class ServerConfig:
         self.host: str = data.get("host", "localhost")
         self.routes: list[RouteConfig] = [RouteConfig(route) for route in data.get("routes", [])]
 
+class CORSConfig:
+    def __init__(self, data: dict):
+        self.enabled: bool = data.get("enabled", True)
+        self.allow_credentials: str = data.get("allow_credentials", "true")
+        self.allow_methods: str = data.get("allow_methods", "*")
+        self.allow_headers: str = data.get("allow_headers", "*")
+        self.max_age: str = data.get("max_age", "86400")
+        self.allowed_origins: list[str] = data.get("allowed_origins", [])
+
 class HTTPConfig:
     @property
     def http_port(self) -> int:
@@ -31,6 +40,11 @@ class HTTPConfig:
         """Devuelve un objeto ServerConfig"""
         server_data = self.__config_data.get("server", {})
         return ServerConfig(server_data)
+    @property
+    def cors(self) -> CORSConfig:
+        """Devuelve un objeto CORSConfig"""
+        cors_data = self.__config_data.get("cors", {})
+        return CORSConfig(cors_data)
     @property
     def config_path(self) -> str:
         return self.__config_path

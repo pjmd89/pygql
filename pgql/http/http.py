@@ -212,22 +212,30 @@ class HTTPServer:
             for endpoint, schema in self.__schemas.items():
                 self.__schemas[endpoint] = self.__executor.assign_resolvers(schema, self.__resolvers)
     
-    def on_http_check_origin(self, check_origin_fn: Callable[[str], bool]):
+    def on_http_check_origin(self, check_origin_fn: Callable[[str, list[str]], bool]):
         """Registra función para validar orígenes CORS dinámicamente
         
         Args:
-            check_origin_fn: Función que recibe el origin (string) y retorna True si está permitido
+            check_origin_fn: Función que recibe el origin (string) y allowed_origins (list) 
+                           y retorna True si está permitido
         
         Example:
-            def my_check_origin(origin: str) -> bool:
-                allowed = ["http://localhost:3000", "https://miapp.com"]
-                return origin in allowed
+            def my_check_origin(origin: str, allowed_origins: list[str]) -> bool:
+                # Validar contra la lista del YAML
+                if origin in allowed_origins:
+                    return True
+                # Validación adicional: permitir subdominios
+                if origin.endswith('.midominio.com'):
+                    return True
+                # Validación basada en patrón o base de datos
+                return is_origin_in_database(origin)
             
             server.on_http_check_origin(my_check_origin)
             
         Note:
-            Por defecto, todos los orígenes están permitidos (retorna True).
-            Si no se define esta función, CORS permitirá todos los orígenes.
+            - allowed_origins proviene del archivo YAML (cors.allowed_origins)
+            - Si allowed_origins está vacío en el YAML, se recibe una lista vacía []
+            - El callback tiene prioridad sobre la validación simple de allowed_origins
         """
         self.__on_http_check_origin = check_origin_fn
     
@@ -412,25 +420,40 @@ class HTTPServer:
         # Crear app Starlette
         self.__app = Starlette(routes=all_routes, debug=self.__httpConfig.debug)
         
-        # Añadir middleware CORS con validación dinámica
-        # Crear middleware personalizado que valida el origin dinámicamente
-        check_origin_fn = self.__on_http_check_origin or (lambda origin: True)  # Por defecto permite todos
+        # Obtener configuración de CORS
+        cors_config = self.__httpConfig.cors
         
+        # Crear función de validación de origin combinando config y callback
+        def check_origin_combined(origin: str) -> bool:
+            # Si hay callback personalizado, usarlo (pasándole allowed_origins del config)
+            if self.__on_http_check_origin:
+                return self.__on_http_check_origin(origin, cors_config.allowed_origins)
+            # Si hay lista de orígenes permitidos en config, validar contra ella
+            if cors_config.allowed_origins:
+                return origin in cors_config.allowed_origins
+            # Por defecto permite todos
+            return True
+        
+        # Añadir middleware CORS con validación dinámica
         @self.__app.middleware("http")
         async def cors_middleware(request: Request, call_next):
+            # Si CORS no está habilitado, procesar sin headers CORS
+            if not cors_config.enabled:
+                return await call_next(request)
+            
             # Obtener el origin del request
             origin = request.headers.get("origin", "")
             
             # Si no hay origin o está permitido, procesar request
-            if not origin or check_origin_fn(origin):
+            if not origin or check_origin_combined(origin):
                 response = await call_next(request)
                 
                 # Añadir headers CORS si hay origin
                 if origin:
                     response.headers["Access-Control-Allow-Origin"] = origin
-                    response.headers["Access-Control-Allow-Credentials"] = "true"
-                    response.headers["Access-Control-Allow-Methods"] = "*"
-                    response.headers["Access-Control-Allow-Headers"] = "*"
+                    response.headers["Access-Control-Allow-Credentials"] = cors_config.allow_credentials
+                    response.headers["Access-Control-Allow-Methods"] = cors_config.allow_methods
+                    response.headers["Access-Control-Allow-Headers"] = cors_config.allow_headers
                 
                 return response
             else:
@@ -445,17 +468,21 @@ class HTTPServer:
         @self.__app.middleware("http")
         async def cors_preflight_middleware(request: Request, call_next):
             if request.method == "OPTIONS":
+                # Si CORS no está habilitado, dejar pasar la request normalmente
+                if not cors_config.enabled:
+                    return await call_next(request)
+                
                 origin = request.headers.get("origin", "")
                 
-                if not origin or check_origin_fn(origin):
+                if not origin or check_origin_combined(origin):
                     return Response(
                         status_code=200,
                         headers={
                             "Access-Control-Allow-Origin": origin if origin else "*",
-                            "Access-Control-Allow-Methods": "*",
-                            "Access-Control-Allow-Headers": "*",
-                            "Access-Control-Allow-Credentials": "true",
-                            "Access-Control-Max-Age": "86400"
+                            "Access-Control-Allow-Methods": cors_config.allow_methods,
+                            "Access-Control-Allow-Headers": cors_config.allow_headers,
+                            "Access-Control-Allow-Credentials": cors_config.allow_credentials,
+                            "Access-Control-Max-Age": cors_config.max_age
                         }
                     )
                 else:

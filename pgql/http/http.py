@@ -13,10 +13,11 @@ from .config import HTTPConfig, RouteConfig
 from .authorize_info import AuthorizeInfo
 from .session import SessionStore, Session
 from starlette.applications import Starlette
-from starlette.responses import JSONResponse, Response
+from starlette.responses import JSONResponse, Response, FileResponse
 from starlette.requests import Request
 from starlette.routing import Route, Mount
 from starlette.middleware import Middleware
+import os
 
 # Cache para evitar doble ejecución de assess() durante validación y ejecución
 _scalar_cache: contextvars.ContextVar[dict] = contextvars.ContextVar('scalar_cache', default=None)
@@ -28,6 +29,7 @@ class HTTPServer:
         self.__routes: list[Route] = []
         self.__mounts: list[Mount] = []  # Para montar aplicaciones ASGI adicionales
         self.__schemas: dict[str, GraphQLSchema] = {}
+        self.__file_base_dir: str = ""  # Directorio base para archivos estáticos
         self.__on_authorize: Optional[Callable[[AuthorizeInfo], bool]] = None
         self.__on_http_check_origin: Optional[Callable[[str], bool]] = None  # Callback para validar orígenes CORS
         self.__resolvers: dict[str, type] = {}
@@ -41,23 +43,26 @@ class HTTPServer:
                 case ConfigHTTPEnum.MODE_GQL:
                     schema = self.__load_schema(route.schema)
                     self.__schemas[route.endpoint] = schema
-                    async def handler(request):
-                        return await self.__class__.gql_handler(
-                            self.__schemas, 
-                            request, 
-                            self.__session_store,
-                            self.__httpConfig.cookie_name
-                        )
-                    self.__routes.append(Route(route.endpoint, handler, methods=['POST']))
-                # case ConfigHTTPEnum.MODE_FILE:
-                #     async def file_handler(request):
-                #         return await self.file_handler(request)
-                #     self.__routes.append(Route(route.endpoint, file_handler))
+                    self.__routes.append(Route(route.endpoint, self.__gql_request_handler, methods=['POST']))
+                case ConfigHTTPEnum.MODE_FILE:
+                    self.__file_base_dir = route.path
+                    # Añadir {path:path} para capturar cualquier archivo bajo el endpoint
+                    file_route = f"{route.endpoint}/{{path:path}}"
+                    self.__routes.append(Route(file_route, self.__file_handler, methods=['GET']))
                 # case ConfigHTTPEnum.MODE_REST:
                 #     async def rest_handler(request):
                 #         return await self.rest_handler(request)
                 #     self.__routes.append(Route(route.endpoint, rest_handler))
 
+    async def __gql_request_handler(self, request: Request):
+        """Handler de instancia para requests GraphQL"""
+        return await self.__class__.gql_handler(
+            self.__schemas,
+            request,
+            self.__session_store,
+            self.__httpConfig.cookie_name
+        )
+    
     def __load_schema(self, schema_path: str) -> GraphQLSchema:
         schema_parts = []
         for file_path in glob.glob(schema_path + '/**/*.gql', recursive=True):
@@ -366,12 +371,6 @@ class HTTPServer:
     def rest(self, route: RouteConfig):
         pass
 
-    async def file_handler(self, request: Request):
-        return Response("File handler not implemented", status_code=501)
-
-    async def rest_handler(self, request: Request):
-        return Response("REST handler not implemented", status_code=501)
-
     def mount(self, path: str, app, name: str = None):
         """Monta una aplicación ASGI (como FastAPI) en una ruta específica
         
@@ -580,11 +579,23 @@ class HTTPServer:
         except Exception as e:
             return JSONResponse({"errors": [str(e)]}, status_code=400)
 
-    async def file_handler(self, request: Request):
-        pass
+    async def __file_handler(self, request: Request):
+        """Sirve archivos estáticos desde el directorio configurado"""
+        file_path = request.path_params.get("path", "")
+        full_path = os.path.join(self.__file_base_dir, file_path)
+        # Seguridad: evitar path traversal (ej: ../../../etc/passwd)
+        #full_path = os.path.normpath(full_path)
+        #base_dir_abs = os.path.abspath(base_dir)
+        #full_path_abs = os.path.abspath(full_path)
+        # Verificar si el archivo existe
+        # Verificar si el archivo existe
+        if not os.path.isfile(full_path):
+            return JSONResponse({"error": "File not found"}, status_code=404)
+        # Servir el archivo
+        return FileResponse(full_path)
 
     async def rest_handler(self, request: Request):
-        pass
+        return Response("REST handler not implemented", status_code=501)
     
     def not_found_handler(self, request: Request):
         pass
